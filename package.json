@@ -1,1 +1,0 @@
-{"name":"dengi-ios","version":"1.0.0","private":true,"dependencies":{"@capacitor-community/speech-recognition":"^6.0.1","@capacitor/cli":"^6.2.2","@capacitor/core":"^6.2.2","@capacitor/ios":"^6.2.2"}}
