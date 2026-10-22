@@ -1,0 +1,42 @@
+name: Build iOS (unsigned IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        run: npm install
+      - name: Prepare web app
+        run: |
+          mkdir www
+          cp index.html www/index.html
+          cp icon.png www/dengi-icon-512.png
+      - name: Create iOS project
+        run: |
+          npx cap add ios
+          python3 patch.py
+          npx cap sync ios
+      - name: Build (no signing)
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
+            -configuration Release -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+      - name: Make IPA
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qr Dengi.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dengi-ipa
+          path: Dengi.ipa
