@@ -31,6 +31,12 @@ KEYS = {
     "leak": ("Протечка", "", "binary"),
     "smoke": ("Дым", "", "binary"),
     "switch": ("Питание", "", "switch"),
+    # настройки: number — число в пределах min..max, select — выбор из списка
+    "target_humidity": ("Целевая влажность", "%", "number"),
+    "target_temperature": ("Целевая температура", "°C", "number"),
+    "brightness": ("Яркость", "%", "number"),
+    "fan_level": ("Режим", "", "select"),
+    "mode": ("Режим работы", "", "select"),
 }
 
 
@@ -44,10 +50,12 @@ class Entity:
     value: object = None
     ts: float = 0.0
     writable: bool = False
+    opts: dict = None       # для number: min/max/step, для select: options
 
     def as_dict(self):
         return {"id": self.id, "key": self.key, "kind": self.kind, "name": self.name,
-                "unit": self.unit, "value": self.value, "ts": self.ts, "writable": self.writable}
+                "unit": self.unit, "value": self.value, "ts": self.ts, "writable": self.writable,
+                "opts": self.opts}
 
 
 @dataclass
@@ -95,7 +103,7 @@ class Hub:
         return d
 
     def update(self, dev_id, eid, key, value, *, name=None, unit=None, kind=None,
-               writable=False, ts=None):
+               writable=False, ts=None, opts=None):
         """Записать показание. eid — уникальное имя внутри устройства, key — тип из KEYS."""
         d = self.devices.get(dev_id)
         if d is None:
@@ -105,7 +113,7 @@ class Hub:
         e = d.entities.get(eid)
         if e is None:
             e = d.entities[eid] = Entity(full, key, kind or def_kind, name or label,
-                                         def_unit if unit is None else unit, writable=writable)
+                                         def_unit if unit is None else unit, writable=writable, opts=opts)
         if e.kind in ("binary", "switch") and value is not None:
             value = bool(value)
         elif isinstance(value, float):
@@ -183,7 +191,7 @@ class Hub:
 
     # ---- история ----------------------------------------------------
     def _save_sample(self, e: Entity):
-        if e.value is None or isinstance(e.value, str):
+        if e.value is None or isinstance(e.value, str) or e.kind in ("number", "select"):
             return
         v = float(e.value)
         last = self._last_saved.get(e.id)

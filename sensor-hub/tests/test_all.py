@@ -14,7 +14,7 @@ from hub.core import Hub
 from hub.drivers import ble_parsers as bp
 from hub.drivers import xiaomi_api as xa
 from hub.drivers.shelly import ShellyDriver
-from hub.drivers.xiaomi import XiaomiDriver, map_events, map_spec, state_from_events
+from hub.drivers.xiaomi import XiaomiDriver, map_controls, map_events, map_spec, option_label, state_from_events
 from hub.server import make_app
 
 HERE = Path(__file__).parent
@@ -108,6 +108,27 @@ LEAK_SPEC = {"type": "urn:miot-spec-v2:device:submersion-sensor:0000A012:lumi-aq
         {"iid": 1, "type": "urn:miot-spec-v2:event:low-battery:00005003:lumi-aq1:1"}]}]}
 
 
+HUM_SPEC = {"type": "urn:miot-spec-v2:device:humidifier:0000A00E:deerma-mjjsq:1", "services": [
+    {"iid": 2, "type": "urn:miot-spec-v2:service:humidifier:00007818:deerma-mjjsq:1", "description": "Humidifier", "properties": [
+        {"iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:deerma-mjjsq:1", "format": "bool", "access": ["read", "write", "notify"]},
+        {"iid": 2, "type": "urn:miot-spec-v2:property:fan-level:00000016:deerma-mjjsq:1", "format": "uint8", "access": ["read", "write", "notify"],
+         "value-list": [{"value": 1, "description": "Level1"}, {"value": 2, "description": "Level2"}, {"value": 3, "description": "Level3"}, {"value": 4, "description": "Humidity"}]},
+        {"iid": 3, "type": "urn:miot-spec-v2:property:target-humidity:00000022:deerma-mjjsq:1", "format": "uint8", "access": ["read", "write", "notify"], "value-range": [40, 70, 1]}]},
+    {"iid": 3, "type": "urn:miot-spec-v2:service:environment:0000780A:deerma-mjjsq:1", "properties": [
+        {"iid": 1, "type": "urn:miot-spec-v2:property:relative-humidity:0000000C:deerma-mjjsq:1", "format": "uint8", "access": ["read", "notify"]}]}]}
+
+
+class Controls(unittest.TestCase):
+    def test_humidifier(self):
+        c = {i["key"]: i for i in map_controls(HUM_SPEC)}
+        self.assertEqual(c["target_humidity"]["opts"], {"min": 40, "max": 70, "step": 1})
+        self.assertEqual([o["label"] for o in c["fan_level"]["opts"]["options"]],
+                         ["Скорость 1", "Скорость 2", "Скорость 3", "Авто (по влажности)"])
+        self.assertEqual((c["fan_level"]["siid"], c["fan_level"]["piid"]), (2, 2))
+        self.assertEqual(map_controls(SPEC), [])
+        self.assertEqual(option_label("Gear_2"), "Скорость 2")
+
+
 class Events(unittest.TestCase):
     def test_map(self):
         self.assertEqual(map_events(LEAK_SPEC, set()), [{"key": "leak", "value": True, "ekey": "2.1"},
@@ -124,7 +145,8 @@ class Events(unittest.TestCase):
 
 def fake_cloud(log):
     """Имитация облака Xiaomi: проверяет подпись, отвечает зашифрованно."""
-    values = {("blt.3.abc", 2, 1): 21.5, ("blt.3.abc", 2, 2): 48.0, ("blt.3.abc", 3, 1): 77, ("plug1", 2, 1): False}
+    values = {("blt.3.abc", 2, 1): 21.5, ("blt.3.abc", 2, 2): 48.0, ("blt.3.abc", 3, 1): 77, ("plug1", 2, 1): False,
+              ("hum1", 2, 1): True, ("hum1", 2, 2): 1, ("hum1", 2, 3): 50, ("hum1", 3, 1): 65}
 
     async def handler(request):
         q = dict(request.query)
@@ -141,6 +163,7 @@ def fake_cloud(log):
                 {"did": "blt.3.abc", "name": "Термометр спальня", "model": "miaomiaoce.sensor_ht.t2", "isOnline": True,
                  "spec_type": SPEC["type"], "token": "SECRET"},
                 {"did": "plug1", "name": "Розетка", "model": "x.plug.v1", "isOnline": True, "spec_type": "urn:plug"},
+                {"did": "hum1", "name": "Увлажнитель", "model": "deerma.humidifier.mjjsq", "isOnline": True, "spec_type": "urn:hum"},
                 {"did": "lumi.wet", "name": "Протечка кухня", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
                 {"did": "lumi.dry", "name": "Протечка туалет", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
                 {"did": "lumi.mute", "name": "Протечка без журнала", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"}]}
@@ -182,7 +205,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         drv.cloud.api_url = lambda c: str(srv.make_url("/app"))
 
         async def spec(url):
-            return SPEC if "miaomiaoce" in url else LEAK_SPEC if "leak" in url else PLUG_SPEC
+            return SPEC if "miaomiaoce" in url else LEAK_SPEC if "leak" in url else HUM_SPEC if "hum" in url else PLUG_SPEC
         drv._fetch_json = spec
         task = asyncio.create_task(drv.run())
         for _ in range(50):
@@ -203,6 +226,15 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertIs(ent.value, False)
         await drv.set(dev, ent, True)
         self.assertEqual(log[-1], ("/miotspec/prop/set", {"params": [{"did": "plug1", "siid": 2, "piid": 1, "value": True}]}))
+        hdev, th = hub.find_entity("xiaomi:hum1/target_humidity")
+        self.assertEqual((th.kind, th.value, th.opts["max"]), ("number", 50, 70))
+        await drv.set(hdev, th, 99)          # выше предела — обрезается до 70
+        self.assertEqual(log[-1][1]["params"][0], {"did": "hum1", "siid": 2, "piid": 3, "value": 70})
+        fl = hdev.entities["fan_level"]
+        await drv.set(hdev, fl, "4")
+        self.assertEqual((log[-1][1]["params"][0]["value"], fl.value), (4, 4))
+        with self.assertRaises(RuntimeError):
+            await drv.set(hdev, fl, 9)
         self.assertNotIn("SECRET", json.dumps(drv.diagnostics()))
         task.cancel(); await drv.cloud.close(); await srv.close()
 

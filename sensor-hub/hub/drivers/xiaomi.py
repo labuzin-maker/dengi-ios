@@ -92,6 +92,55 @@ def map_spec(spec: dict) -> list[dict]:
     return out
 
 
+# настройки, которыми можно управлять: имя свойства -> наш ключ
+CONTROL_MAP = {"target-humidity": "target_humidity", "target-temperature": "target_temperature",
+               "fan-level": "fan_level", "brightness": "brightness", "mode": "mode"}
+
+
+def option_label(text) -> str:
+    """Перевести название варианта из каталога Xiaomi."""
+    t = str(text or "").strip()
+    low = t.lower().replace("_", " ")
+    for word, ru in (("level", "Скорость"), ("gear", "Скорость")):
+        if low.startswith(word):
+            num = low[len(word):].strip()
+            if num.isdigit():
+                return f"{ru} {num}"
+    return {"auto": "Авто", "humidity": "Авто (по влажности)", "const humidity": "Авто (по влажности)",
+            "sleep": "Ночной", "silent": "Тихий", "low": "Слабо", "medium": "Средне", "mid": "Средне",
+            "high": "Сильно", "strong": "Сильно", "favorite": "Свой", "standard": "Обычный",
+            "natural wind": "Естественный", "straight wind": "Прямой", "idle": "Ожидание"}.get(low, t)
+
+
+def map_controls(spec: dict) -> list[dict]:
+    """Настройки устройства: целевая влажность, скорость и т.п."""
+    out, seen = [], set()
+    for srv in spec.get("services") or []:
+        sname = urn_name(srv.get("type"))
+        if sname in SKIP_ON_SERVICES or sname == "device-information":
+            continue
+        for prop in srv.get("properties") or []:
+            key = CONTROL_MAP.get(urn_name(prop.get("type")))
+            access = prop.get("access") or []
+            if not key or key in seen or "write" not in access or "read" not in access:
+                continue
+            item = {"key": key, "eid": key, "siid": srv["iid"], "piid": prop["iid"], "writable": True,
+                    "name": None, "float": prop.get("format") == "float"}
+            rng, lst = prop.get("value-range"), prop.get("value-list")
+            if lst:
+                item["kind"] = "select"
+                item["opts"] = {"options": [{"value": o.get("value"), "label": option_label(o.get("description"))}
+                                            for o in lst]}
+            elif rng and len(rng) >= 2:
+                item["kind"] = "number"
+                item["opts"] = {"min": rng[0], "max": rng[1], "step": rng[2] if len(rng) > 2 and rng[2] else 1}
+            else:
+                continue
+            seen.add(key)
+            out.append(item)
+    return out
+
+
 # события, из которых складывается состояние датчика: имя -> (наш ключ, значение)
 EVENT_MAP = {
     "submersion-detected": ("leak", True), "no-submersion": ("leak", False),
@@ -283,7 +332,7 @@ class XiaomiDriver(Driver):
                 did = str(d.get("did"))
                 model = d.get("model") or ""
                 spec = await self._spec(model, d.get("spec_type")) if model else None
-                items = map_spec(spec) if spec else []
+                items = (map_spec(spec) + map_controls(spec)) if spec else []
                 devs[did] = {"country": country, "raw": d,
                              "items": items,
                              "events": map_events(spec, {i["key"] for i in items}) if spec else [],
@@ -360,8 +409,8 @@ class XiaomiDriver(Driver):
             if it["siid"] == r.get("siid") and it["piid"] == r.get("piid"):
                 ts = r.get("updateTime") or None
                 self.hub.update(f"xiaomi:{did}", it["eid"], it["key"], convert(it, r["value"]),
-                                name=it.get("name"), unit=it.get("unit"),
-                                writable=it["writable"], ts=ts)
+                                name=it.get("name"), unit=it.get("unit"), kind=it.get("kind"),
+                                writable=it["writable"], ts=ts, opts=it.get("opts"))
 
     async def set(self, device, entity, value):
         did = device.id.split(":", 1)[1]
@@ -370,8 +419,20 @@ class XiaomiDriver(Driver):
         it = next((i for i in (x or {}).get("items", []) if i["eid"] == eid), None)
         if not it or not it["writable"]:
             raise RuntimeError("Это устройство не управляется")
-        await self.cloud.set_prop(x["country"], did, it["siid"], it["piid"], bool(value))
-        self.hub.update(device.id, eid, it["key"], bool(value), writable=True)
+        kind = it.get("kind")
+        if kind == "number":
+            o = it["opts"]
+            value = max(o["min"], min(o["max"], float(value)))
+            value = value if it.get("float") else int(round(value))
+        elif kind == "select":
+            allowed = [o["value"] for o in it["opts"]["options"]]
+            value = next((v for v in allowed if str(v) == str(value)), None)
+            if value is None:
+                raise RuntimeError("Такого варианта у устройства нет")
+        else:
+            value = bool(value)
+        await self.cloud.set_prop(x["country"], did, it["siid"], it["piid"], value)
+        self.hub.update(device.id, eid, it["key"], value, writable=True)
 
     def diagnostics(self):
         """Список устройств без секретов — для разбора, если что-то не отображается."""

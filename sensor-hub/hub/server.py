@@ -88,6 +88,8 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
             raise RuntimeError("Нет такого датчика")
         if not ent.writable:
             raise RuntimeError("Это устройство не управляется")
+        if body.get("value") is None:
+            raise RuntimeError("Не указано значение")
         await hub.drivers[dev.driver].set(dev, ent, body.get("value"))
         return web.json_response({"ok": True})
 

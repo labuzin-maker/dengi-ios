@@ -161,8 +161,22 @@ details > div { display: flex; flex-direction: column; gap: 10px; padding-top: 1
 .qr img { width: 200px; height: 200px; border-radius: 8px; background: #fff; }
 .err { color: var(--crit); font-size: 14px; }
 .hint { font-size: 13px; color: var(--muted); }
+.ctls { display: flex; flex-direction: column; }
+.ctls:empty { display: none; }
+.ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.ctl:first-child { border-top: 0; }
+.ctl > span:first-child { font-weight: 500; }
+.ctl.col { flex-direction: column; align-items: stretch; gap: 8px; }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper b { min-width: 72px; text-align: center; font-size: 18px; font-weight: 700; }
+.stepper button { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); font-size: 22px; line-height: 1; display: grid; place-items: center; }
+.stepper button[disabled], .seg button[disabled], .tg[disabled] { opacity: .45; cursor: default; }
+.tg { width: 52px; height: 32px; border-radius: 16px; background: var(--line); position: relative; flex: none; transition: background .15s; }
+.tg i { position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--raised); transition: transform .15s; }
+.tg[aria-checked="true"] { background: var(--accent); }
+.tg[aria-checked="true"] i { transform: translateX(20px); }
 a { color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .sw, .sw .ic { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .sw, .sw .ic, .tg, .tg i { transition: none; } }
 </style>
 
 <div class="wrap">
@@ -259,7 +273,7 @@ async function boot() {
 function startDemo() {
   mode = "demo"; $("#demoNote").hidden = false; setLink(true);
   const mk = (id, name, rm, cat, ents, online = true, age = 0) => ({ id, name, orig_name: name, room: rm, driver: "demo", model: "Пример", category: cat, online, hidden: false,
-    entities: ents.map(([k, kind, label, unit, value, writable]) => ({ id: id + "/" + k, key: k, kind, name: label, unit, value, ts: nowS() - age, writable: !!writable })) });
+    entities: ents.map(([k, kind, label, unit, value, writable, opts]) => ({ id: id + "/" + k, key: k, kind, name: label, unit, value, ts: nowS() - age, writable: !!writable, opts: opts || null })) });
   const T = v => ["temperature", "sensor", "Температура", "°C", v], H = v => ["humidity", "sensor", "Влажность", "%", v], B = v => ["battery", "sensor", "Батарея", "%", v];
   const S = (k, l, v) => [k, "switch", l, "", v, true];
   state = { drivers: [{ name: "demo", title: "Демо-датчики", status: "ok", message: "Примеры" }], devices: [
@@ -272,7 +286,9 @@ function startDemo() {
     mk("d4", "Входная дверь", "Прихожая", "magnet-sensor", [["contact", "binary", "Открыто", "", false], B(95)]),
     mk("d5", "Датчик движения", "Прихожая", "motion-sensor", [["motion", "binary", "Движение", "", false], ["illuminance", "sensor", "Освещённость", "лк", 120]]),
     mk("d7", "Розетка обогревателя", "Детская", "outlet", [S("switch", "Питание", true), S("switch_2", "USB", false), ["power", "sensor", "Мощность", "Вт", 840], ["device_temp", "sensor", "Нагрев корпуса", "°C", 37]]),
-    mk("d10", "Увлажнитель", "Гостиная", "humidifier", [S("switch", "Увлажнитель", false)]),
+    mk("d10", "Увлажнитель", "Гостиная", "humidifier", [S("switch", "Увлажнитель", true), H(46), T(22.8),
+      ["target_humidity", "number", "Целевая влажность", "%", 50, true, { min: 40, max: 70, step: 1 }],
+      ["fan_level", "select", "Режим", "", 2, true, { options: [{ value: 1, label: "Скорость 1" }, { value: 2, label: "Скорость 2" }, { value: 3, label: "Скорость 3" }, { value: 4, label: "Авто (по влажности)" }] }]]),
     mk("d11", "Ночник", "Детская", "light", [S("switch", "Свет", false)]),
   ] };
   for (const d of state.devices) for (const e of d.entities) if (e.key === "temperature" || e.key === "humidity") sparks[e.id] = demoHistory(e, 24, 36).map(p => p[1]);
@@ -373,7 +389,9 @@ function render() {
     used.add(d.id);
     const many = d.entities.filter(x => x.kind === "switch").length > 1, p = ent(d, "power"), dt = ent(d, "device_temp");
     const icon = /usb/i.test(e.name) ? "usb" : /свет|ламп|light|ночник/i.test(e.name + d.name + d.category) ? "bulb" : /камер|camera/i.test(e.name + d.category) ? "cam" : "power";
-    const info = [(many || e.name !== "Питание") && e.name.toLowerCase() !== d.name.toLowerCase() ? e.name : "", e.id.endsWith("/switch") && p && p.value != null ? fmt("power", p.value) + " Вт" : "", e.id.endsWith("/switch") && dt && dt.value != null ? "корпус " + fmt("device_temp", dt.value) + "°" : ""].filter(Boolean).join(" · ");
+    const th = ent(d, "target_humidity"), fl = ent(d, "fan_level");
+    const info = [(many || e.name !== "Питание") && e.name.toLowerCase() !== d.name.toLowerCase() ? e.name : "", e.id.endsWith("/switch") && p && p.value != null ? fmt("power", p.value) + " Вт" : "", e.id.endsWith("/switch") && dt && dt.value != null ? "корпус " + fmt("device_temp", dt.value) + "°" : "",
+      e.id.endsWith("/switch") && th && th.value != null ? "цель " + th.value + "%" : "", e.id.endsWith("/switch") && fl && optLabel(fl) ? optLabel(fl) : ""].filter(Boolean).join(" · ");
     const can = e.writable && d.online;
     return `<button class="sw" role="switch" aria-checked="${!!e.value}" data-sw="${esc(e.id)}" ${can ? "" : "disabled"}><span class="top"><span class="ic">${ic(icon)}</span><span class="stt">${d.online ? (e.value ? "Вкл" : "Выкл") : "нет связи"}</span></span>
       <span><b>${esc(d.name)}</b><small>${esc([d.room, info].filter(Boolean).join(" · "))}</small></span></button>`; }).join("")}</div><button class="more" data-act="swHelp">Как переименовать или скрыть устройство</button></section>`);
@@ -388,13 +406,30 @@ function render() {
   const hid = state.devices.filter(d => d.hidden);
   $("#hiddenList").innerHTML = hid.length ? "Скрыты: " + hid.map(d => `<button data-dev="${esc(d.id)}">${esc(d.name)}</button>`).join(", ") : "";
   if (sheet && sheet.type === "settings") drawSheet();
+  if (sheet && sheet.type === "dev") { const c = $("#devCtl"), d = state.devices.find(x => x.id === sheet.id); if (c && d) c.innerHTML = ctlHtml(d); }
+}
+/* настройки устройства в карточке: выключатели, числа, выбор режима */
+const uiStep = o => Math.max(o.step || 1, Math.round((o.max - o.min) / 6 / (o.step || 1)) * (o.step || 1));
+const optLabel = e => ((e.opts?.options || []).find(o => String(o.value) === String(e.value)) || {}).label;
+function ctlHtml(d) {
+  const dis = d.online ? "" : "disabled";
+  return d.entities.filter(e => e.writable).map(e => {
+    if (e.kind === "switch") return `<div class="ctl"><span>${esc(e.name.toLowerCase() === d.name.toLowerCase() ? "Питание" : e.name)}</span><button class="tg" role="switch" aria-checked="${!!e.value}" data-sw="${esc(e.id)}" aria-label="${esc(e.name)}" ${dis}><i></i></button></div>`;
+    if (e.kind === "number") return `<div class="ctl"><span>${esc(e.name)}</span><span class="stepper"><button data-act="num" data-e="${esc(e.id)}" data-d="-1" aria-label="Меньше" ${dis}>−</button><b>${e.value == null ? "—" : fmt(e.key, e.value)}${e.unit ? " " + esc(e.unit) : ""}</b><button data-act="num" data-e="${esc(e.id)}" data-d="1" aria-label="Больше" ${dis}>+</button></span></div>`;
+    if (e.kind === "select") return `<div class="ctl col"><span>${esc(e.name)}</span><span class="seg">${(e.opts?.options || []).map(o => `<button data-act="sel" data-e="${esc(e.id)}" data-v="${esc(o.value)}" aria-pressed="${String(o.value) === String(e.value)}" ${dis}>${esc(o.label)}</button>`).join("")}</span></div>`;
+    return ""; }).join("") + (d.online || !d.entities.some(e => e.writable) ? "" : `<div class="sub">Устройство не на связи, управление недоступно.</div>`);
+}
+async function setEnt(e, value) {
+  const old = e.value; e.value = value; render();
+  if (mode === "demo") return;
+  try { await api("set", { entity: e.id, value }); } catch (err) { e.value = old; render(); if (sheet) { sheet.err = "Не получилось: " + err.message; } }
 }
 const findEnt = id => { for (const d of state.devices) for (const e of d.entities) if (e.id === id) return [d, e]; return []; };
 
 /* долгое нажатие на плитку управления открывает карточку устройства */
 let pressT = null, longPress = false;
 document.addEventListener("pointerdown", ev => { const t = ev.target.closest("[data-sw]"); longPress = false; clearTimeout(pressT);
-  if (t) pressT = setTimeout(() => { longPress = true; const [d] = findEnt(t.dataset.sw); if (d) openSheet({ type: "dev", id: d.id }); }, 550); });
+  if (t && t.classList.contains("sw")) pressT = setTimeout(() => { longPress = true; const [d] = findEnt(t.dataset.sw); if (d) openSheet({ type: "dev", id: d.id }); }, 550); });
 for (const n of ["pointerup", "pointercancel", "pointermove"]) document.addEventListener(n, ev => { if (n !== "pointermove" || Math.abs(ev.movementX) + Math.abs(ev.movementY) > 6) clearTimeout(pressT); });
 document.addEventListener("contextmenu", ev => { if (ev.target.closest("[data-sw]")) ev.preventDefault(); });
 
@@ -418,7 +453,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet()
 function openSheet(s) { sheet = s; if (s.type === "dev") pickEntity(); drawSheet(); if (s.type === "dev") loadHistory(); }
 function closeSheet() { sheet = null; $("#sheetHost").innerHTML = ""; }
 function pickEntity() { const d = state.devices.find(x => x.id === sheet.id); if (!d) return;
-  const c = d.entities.filter(e => e.kind !== "switch"); sheet.eid = sheet.eid || (c.find(e => e.key === "temperature") || c[0] || {}).id; sheet.hours = sheet.hours || 24; }
+  const c = d.entities.filter(e => e.kind === "sensor" || e.kind === "binary"); sheet.eid = sheet.eid || (c.find(e => e.key === "temperature") || c[0] || {}).id; sheet.hours = sheet.hours || 24; }
 function drawSheet() {
   const host = $("#sheetHost");
   const head = t => `<div class="sheet-head"><h3>${esc(t)}</h3><button class="x" data-act="close">Закрыть</button></div>`;
@@ -427,8 +462,8 @@ function drawSheet() {
   if (sheet.type === "key") h = `<h3>Ключ доступа</h3><label class="field">Ключ, который выдал хаб при установке<input id="keyInput" type="password" autocomplete="off" value=""></label><button class="btn" data-act="saveKey">Войти</button>`;
   if (sheet.type === "dev") {
     const d = state.devices.find(x => x.id === sheet.id); if (!d) return closeSheet();
-    const list = d.entities.filter(e => e.kind !== "switch"), e = list.find(x => x.id === sheet.eid);
-    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div>`;
+    const list = d.entities.filter(e => e.kind === "sensor" || e.kind === "binary"), e = list.find(x => x.id === sheet.eid);
+    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div><div id="devCtl" class="ctls">${ctlHtml(d)}</div>`;
     if (e) {
       const cur = e.kind === "binary" ? (e.value == null ? "—" : (BIN[e.key] || ["Нет", "Да"])[+!!e.value]) : `${fmt(e.key, e.value)}<i>${esc(e.unit)}</i>`;
       h += (list.length > 1 ? `<div class="seg">${list.map(x => `<button data-act="pick" data-e="${esc(x.id)}" aria-pressed="${x.id === e.id}">${esc(x.name)}</button>`).join("")}</div>` : "")
@@ -493,6 +528,9 @@ const actions = {
   close: closeSheet,
   other() { showOther = true; render(); },
   swHelp() { openSheet({ type: "msg", title: "Карточка устройства", text: "Плитки климата и строки безопасности открывают карточку по нажатию. У плиток управления нажатие переключает устройство, а карточка открывается долгим нажатием. В карточке можно сменить название и комнату или скрыть устройство с панели." }); },
+  num(t) { const [, e] = findEnt(t.dataset.e); if (!e) return; const o = e.opts || { min: 0, max: 100, step: 1 };
+    const cur = e.value == null ? o.min : Number(e.value), v = Math.max(o.min, Math.min(o.max, cur + (+t.dataset.d) * uiStep(o))); if (v !== cur || e.value == null) setEnt(e, v); },
+  sel(t) { const [, e] = findEnt(t.dataset.e); if (!e) return; const o = (e.opts?.options || []).find(x => String(x.value) === t.dataset.v); if (o && String(e.value) !== String(o.value)) setEnt(e, o.value); },
   pick(t) { sheet.eid = t.dataset.e; sheet.data = null; drawSheet(); loadHistory(); },
   period(t) { sheet.hours = +t.dataset.h; sheet.data = null; drawSheet(); loadHistory(); },
   async saveHub() { let u = $("#hubUrl").value.trim(); if (u && !/^https?:\/\//.test(u)) u = "https://" + u; if (u && !u.endsWith("/")) u += "/";
