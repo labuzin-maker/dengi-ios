@@ -274,5 +274,5 @@ class Driver:
     async def set(self, device: Device, entity: Entity, value):
         raise RuntimeError("Это устройство не управляется")
 
-    async def video(self, device: Device, quality=None) -> str:
+    async def video(self, device: Device, quality=None) -> dict:
         raise RuntimeError("У этого устройства нет видео")

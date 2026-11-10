@@ -98,7 +98,7 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
         dev = hub.devices.get(body.get("id", ""))
         if not dev:
             raise RuntimeError("Нет такого устройства")
-        return web.json_response({"url": await hub.drivers[dev.driver].video(dev, body.get("quality"))})
+        return web.json_response(await hub.drivers[dev.driver].video(dev, body.get("quality")))
 
     async def edit_device(request):
         body = await request.json()

@@ -250,6 +250,7 @@ class XiaomiDriver(Driver):
         super().__init__(hub, cfg)
         self.cloud = XiaomiCloud(hub.data_dir / "xiaomi_session.json")
         self.poll = max(15, int(self.cfg.get("poll_seconds", 60)))
+        self.stream_wait = 25      # сколько секунд ждать запуска трансляции камеры
         self.spec_dir = hub.data_dir / "specs"
         self.spec_dir.mkdir(exist_ok=True)
         self._wake = asyncio.Event()
@@ -511,16 +512,40 @@ class XiaomiDriver(Driver):
             url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
         if not url:
             raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
-        # проверяем ссылку со стороны хаба: что по ней отдаётся на самом деле
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
-                async with s.get(url) as r:
-                    body = (await r.content.read(400)).decode("utf-8", "replace")
-                    self._evlog[did] += (f" | проверка: HTTP {r.status}, тип {r.headers.get('Content-Type')}, "
-                                         f"начало: {body[:300]!r}")
-        except Exception as e:
-            self._evlog[did] += f" | проверка: {type(e).__name__}: {e}"[:200]
-        return url
+        # ждём, пока трансляция действительно начнётся: в плейлисте должны появиться куски видео
+        ready, info = await self._wait_stream(url)
+        self._evlog[did] += f" | готовность: {ready}, {info}"
+        return {"url": url, "ready": ready, "info": info}
+
+    async def _wait_stream(self, url):
+        from urllib.parse import urljoin
+        deadline = time.time() + self.stream_wait
+        info = "не проверялось"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
+            async def text(u):
+                async with s.get(u) as r:
+                    return r.status, await r.text(errors="replace")
+            while True:
+                try:
+                    status, body = await text(url)
+                    if "#EXTINF" in body:
+                        return True, "трансляция идёт"
+                    variants = [urljoin(url, ln.strip()) for ln in body.splitlines()
+                                if ln.strip() and not ln.startswith("#")]
+                    if status != 200:
+                        info = f"сервер видео ответил {status}"
+                    elif not variants:
+                        info = "сервер видео вернул пустой список"
+                    else:
+                        vstatus, vbody = await text(variants[0])
+                        if "#EXTINF" in vbody:
+                            return True, "трансляция идёт"
+                        info = f"трансляция ещё не началась (ответ {vstatus})"
+                except Exception as e:
+                    info = f"сервер видео недоступен: {type(e).__name__}"
+                if time.time() >= deadline:
+                    return False, info
+                await asyncio.sleep(2)
 
     def diagnostics(self):
         """Список устройств без секретов — для разбора, если что-то не отображается."""
