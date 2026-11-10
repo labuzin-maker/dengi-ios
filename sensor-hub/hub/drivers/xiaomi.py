@@ -28,6 +28,19 @@ PROP_MAP = {
 }
 # сервисы, в которых свойство "on" — не основной выключатель
 SKIP_ON_SERVICES = {"indicator-light", "physical-controls-locked", "alarm", "screen", "night-light"}
+# названия выключателей по имени сервиса
+SWITCH_LABELS = {
+    "switch": "Питание", "outlet": "Питание", "light": "Свет", "humidifier": "Увлажнитель",
+    "dehumidifier": "Осушитель", "air-purifier": "Очиститель", "fan": "Вентилятор",
+    "heater": "Обогрев", "air-conditioner": "Кондиционер", "camera-control": "Камера",
+    "usb-switch": "USB", "germicidal-lamp": "Лампа", "television": "Телевизор",
+    "vacuum": "Пылесос", "kettle": "Чайник", "night-light": "Ночник",
+}
+# у этих типов устройств температура и влажность — это климат в комнате,
+# у остальных (розетка, камера...) температура означает нагрев самого устройства
+CLIMATE_CATS = {"temperature-humidity-sensor", "temperature-sensor", "humidity-sensor", "air-monitor",
+                "humidifier", "dehumidifier", "air-purifier", "air-conditioner", "heater", "thermostat",
+                "fan", "environment-sensor", "air-fresh"}
 SPEC_URL = "https://miot-spec.org/miot-spec-v2/"
 
 
@@ -39,6 +52,7 @@ def urn_name(urn: str) -> str:
 def map_spec(spec: dict) -> list[dict]:
     """Выбрать из спецификации устройства понятные показания и выключатели."""
     out, seen = [], {}
+    category = urn_name(spec.get("type"))
     for srv in spec.get("services") or []:
         sname = urn_name(srv.get("type"))
         if sname == "device-information":
@@ -50,12 +64,17 @@ def map_spec(spec: dict) -> list[dict]:
                 continue
             item = None
             if pname == "on" and prop.get("format") == "bool" and sname not in SKIP_ON_SERVICES:
+                label = SWITCH_LABELS.get(sname)
+                if not label and "usb" in sname:
+                    label = "USB"
                 item = {"key": "switch", "writable": "write" in access,
-                        "name": srv.get("description") or "Питание"}
+                        "name": label or srv.get("description") or "Питание"}
             elif PROP_MAP.get(pname):
                 item = {"key": PROP_MAP[pname], "writable": False, "name": None}
                 unit = prop.get("unit")
-                if item["key"] == "temperature" and unit == "fahrenheit":
+                if item["key"] == "temperature" and category and category not in CLIMATE_CATS:
+                    item["key"] = "device_temp"
+                if item["key"] in ("temperature", "device_temp") and unit == "fahrenheit":
                     item["conv"] = "f2c"
                 if item["key"] == "pressure" and unit == "pascal":
                     item["conv"] = "pa2hpa"
@@ -70,6 +89,21 @@ def map_spec(spec: dict) -> list[dict]:
             item.update(siid=srv["iid"], piid=prop["iid"],
                         eid=item["key"] if n == 1 else f"{item['key']}_{n}")
             out.append(item)
+    return out
+
+
+def spec_summary(spec: dict) -> list[str]:
+    """Краткий перечень того, что умеет устройство (для диагностики)."""
+    out = []
+    for srv in spec.get("services") or []:
+        sname = urn_name(srv.get("type"))
+        if sname == "device-information":
+            continue
+        for p in srv.get("properties") or []:
+            out.append(f"{srv['iid']}.{p['iid']} {sname}/{urn_name(p.get('type'))} "
+                       f"{p.get('format')} {'/'.join(p.get('access') or [])}")
+        for e in srv.get("events") or []:
+            out.append(f"{srv['iid']}.e{e['iid']} {sname}/{urn_name(e.get('type'))} событие")
     return out
 
 
@@ -98,6 +132,7 @@ class XiaomiDriver(Driver):
         self.spec_dir.mkdir(exist_ok=True)
         self._wake = asyncio.Event()
         self._devs = {}       # did -> {country, items, raw}
+        self._codes = {}      # (did, siid, piid) -> код последнего ответа облака
         self._model_urns = None
 
     # ---- вход (вызывается из панели) --------------------------------
@@ -215,6 +250,8 @@ class XiaomiDriver(Driver):
                 spec = await self._spec(model, d.get("spec_type")) if model else None
                 devs[did] = {"country": country, "raw": d,
                              "items": map_spec(spec) if spec else [],
+                             "category": urn_name(spec.get("type")) if spec else "",
+                             "spec": spec_summary(spec) if spec else [],
                              "room": rooms.get(did, "")}
         for did in set(self._devs) - set(devs):
             self.hub.devices.pop(f"xiaomi:{did}", None)
@@ -223,6 +260,7 @@ class XiaomiDriver(Driver):
             d = x["raw"]
             self.hub.device(f"xiaomi:{did}", name=d.get("name") or d.get("model") or did,
                             driver=self.name, model=d.get("model") or "", room=x["room"],
+                            category=x["category"],
                             online=bool(d.get("isOnline", True)))
         self.hub.notify()
 
@@ -239,6 +277,7 @@ class XiaomiDriver(Driver):
     def _apply(self, r):
         did = str(r.get("did"))
         x = self._devs.get(did)
+        self._codes[(did, r.get("siid"), r.get("piid"))] = r.get("code")
         if not x or r.get("code") != 0 or "value" not in r:
             return
         for it in x["items"]:
@@ -266,5 +305,9 @@ class XiaomiDriver(Driver):
             out.append({"did": did, "name": d.get("name"), "model": d.get("model"),
                         "spec_type": d.get("spec_type"), "online": d.get("isOnline"),
                         "parent": d.get("parent_id"), "country": x["country"],
-                        "mapped": [{k: i[k] for k in ("eid", "siid", "piid")} for i in x["items"]]})
+                        "category": x.get("category"),
+                        "mapped": [f"{i['eid']} {i['siid']}.{i['piid']} код={self._codes.get((did, i['siid'], i['piid']))}"
+                                   for i in x["items"]],
+                        "spec": x.get("spec"),
+                        "list_prop": d.get("prop"), "list_event": d.get("event")})
         return out

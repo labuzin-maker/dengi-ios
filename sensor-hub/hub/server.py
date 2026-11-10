@@ -103,6 +103,9 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
         hours = min(float(request.query.get("hours", 24)), 24 * 30)
         return web.json_response(hub.history(request.query.get("entity", ""), hours))
 
+    async def sparks(request):
+        return web.json_response(hub.sparks(min(float(request.query.get("hours", 24)), 168)))
+
     async def xiaomi_login(request):
         drv = hub.drivers.get("xiaomi")
         if not drv:
@@ -126,6 +129,7 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
     app.router.add_post("/api/set", set_value)
     app.router.add_post("/api/device", edit_device)
     app.router.add_get("/api/history", history)
+    app.router.add_get("/api/sparks", sparks)
     app.router.add_post("/api/xiaomi/login", xiaomi_login)
     app.router.add_post("/api/xiaomi/logout", xiaomi_logout)
     app.router.add_get("/api/diagnostics", diagnostics)

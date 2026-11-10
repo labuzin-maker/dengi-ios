@@ -9,13 +9,13 @@ import time
 from ..core import Driver
 
 DEVICES = [
-    ("demo:living", "Термометр", "Гостиная", {"temperature": 22.4, "humidity": 41, "battery": 87}),
-    ("demo:kids", "Термометр", "Детская", {"temperature": 23.1, "humidity": 44, "battery": 62}),
-    ("demo:balcony", "Уличный термометр", "Балкон", {"temperature": -3.5, "humidity": 71, "battery": 34}),
-    ("demo:door", "Входная дверь", "Прихожая", {"contact": False, "battery": 95}),
-    ("demo:hall", "Датчик движения", "Прихожая", {"motion": False, "illuminance": 120}),
-    ("demo:bath", "Датчик протечки", "Ванная", {"leak": False, "battery": 78}),
-    ("demo:plug", "Розетка обогревателя", "Детская", {"switch": True, "power": 840.0}),
+    ("demo:living", "Термометр", "Гостиная", "temperature-humidity-sensor", {"temperature": 22.4, "humidity": 41, "battery": 87}),
+    ("demo:kids", "Термометр", "Детская", "temperature-humidity-sensor", {"temperature": 23.1, "humidity": 44, "battery": 62}),
+    ("demo:balcony", "Уличный термометр", "Балкон", "temperature-humidity-sensor", {"temperature": -3.5, "humidity": 71, "battery": 34}),
+    ("demo:door", "Входная дверь", "Прихожая", "magnet-sensor", {"contact": False, "battery": 95}),
+    ("demo:hall", "Датчик движения", "Прихожая", "motion-sensor", {"motion": False, "illuminance": 120}),
+    ("demo:bath", "Датчик протечки", "Ванная", "submersion-sensor", {"leak": False, "battery": 78}),
+    ("demo:plug", "Розетка обогревателя", "Детская", "outlet", {"switch": True, "power": 840.0}),
 ]
 
 
@@ -25,7 +25,7 @@ class DemoDriver(Driver):
 
     async def run(self):
         mode = self.cfg.get("mode", "auto")
-        vals = self.vals = {i: dict(v) for i, _, _, v in DEVICES}
+        vals = self.vals = {i: dict(v) for i, _, _, _, v in DEVICES}
         while True:
             if mode == "off" or (mode == "auto" and self.hub.has_real_devices()):
                 self.hub.remove_driver_devices(self.name)
@@ -34,8 +34,8 @@ class DemoDriver(Driver):
                 continue
             self.set_status("ok", "Примеры, пока нет настоящих датчиков")
             t = time.time()
-            for dev_id, name, room, _ in DEVICES:
-                self.hub.device(dev_id, name=name, driver=self.name, model="Пример", room=room)
+            for dev_id, name, room, cat, _ in DEVICES:
+                self.hub.device(dev_id, name=name, driver=self.name, model="Пример", room=room, category=cat)
                 v = vals[dev_id]
                 for key in v:
                     if key == "temperature":

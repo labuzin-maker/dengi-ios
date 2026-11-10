@@ -85,6 +85,19 @@ class Spec(unittest.TestCase):
         m = map_spec(PLUG_SPEC)
         self.assertEqual(len(m), 1)
         self.assertTrue(m[0]["writable"] and m[0]["key"] == "switch")
+        self.assertEqual(m[0]["name"], "Питание")
+
+    def test_outlet_temperature_is_not_climate(self):
+        spec = {"type": "urn:miot-spec-v2:device:outlet:0000A002:x:1", "services": [
+            {"iid": 2, "type": "urn:miot-spec-v2:service:switch:00007808:x:1", "description": "Power Switch Status", "properties": [
+                {"iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:x:1", "format": "bool", "access": ["read", "write"]},
+                {"iid": 6, "type": "urn:miot-spec-v2:property:temperature:00000020:x:1", "format": "uint8", "access": ["read"], "unit": "celsius"}]},
+            {"iid": 7, "type": "urn:miot-spec-v2:service:usb-switch:00007858:x:1", "description": "USB Switch Status", "properties": [
+                {"iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:x:1", "format": "bool", "access": ["read", "write"]}]}]}
+        m = {i["eid"]: i for i in map_spec(spec)}
+        self.assertEqual(sorted(m), ["device_temp", "switch", "switch_2"])
+        self.assertEqual((m["switch"]["name"], m["switch_2"]["name"]), ("Питание", "USB"))
+        self.assertEqual([i["key"] for i in map_spec(SPEC)][:1], ["temperature"])
 
 
 def fake_cloud(log):
@@ -208,6 +221,8 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
             self.assertIs(next(e for e in d["demo:plug"]["entities"] if e["key"] == "switch")["value"], False)
             h = await (await c.get("/api/history?entity=demo:living/temperature", headers=H)).json()
             self.assertTrue(len(h) >= 1)
+            self.assertEqual(d["demo:living"]["category"], "temperature-humidity-sensor")
+            self.assertIsInstance(await (await c.get("/api/sparks", headers=H)).json(), dict)
             self.assertEqual((await c.get("/")).status, 200)
             r = await c.get("/api/events?key=k1")
             line = await r.content.readline()

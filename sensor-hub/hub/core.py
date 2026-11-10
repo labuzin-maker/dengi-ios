@@ -25,6 +25,7 @@ KEYS = {
     "power": ("Мощность", "Вт", "sensor"),
     "energy": ("Энергия", "кВт·ч", "sensor"),
     "voltage": ("Напряжение", "В", "sensor"),
+    "device_temp": ("Нагрев корпуса", "°C", "sensor"),
     "motion": ("Движение", "", "binary"),
     "contact": ("Открыто", "", "binary"),
     "leak": ("Протечка", "", "binary"),
@@ -57,6 +58,7 @@ class Device:
     model: str = ""
     room: str = ""
     online: bool = True
+    category: str = ""
     entities: dict = field(default_factory=dict)
 
 
@@ -79,14 +81,15 @@ class Hub:
         self._last_prune = 0.0
 
     # ---- устройства -------------------------------------------------
-    def device(self, dev_id, *, name, driver, model="", room="", online=True) -> Device:
+    def device(self, dev_id, *, name, driver, model="", room="", online=True, category="") -> Device:
         d = self.devices.get(dev_id)
         if d is None:
-            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online)
+            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online, category)
             self.notify()
         else:
             changed = (d.name, d.model, d.room, d.online) != (name, model or d.model, room or d.room, online)
             d.name, d.model, d.room, d.online = name, model or d.model, room or d.room, online
+            d.category = category or d.category
             if changed:
                 self.notify()
         return d
@@ -148,12 +151,15 @@ class Hub:
     # ---- снимок состояния -------------------------------------------
     def snapshot(self):
         devs = []
+        now = time.time()
         for d in self.devices.values():
             o = self.overrides.get(d.id, {})
+            # датчики на батарейке облако часто считает «не в сети», хотя данные свежие
+            fresh = any(e.ts > now - 7200 for e in d.entities.values())
             devs.append({
                 "id": d.id, "name": o.get("name") or d.name, "orig_name": d.name,
                 "room": o.get("room") or d.room or "Без комнаты", "driver": d.driver,
-                "model": d.model, "online": d.online, "hidden": bool(o.get("hidden")),
+                "model": d.model, "category": d.category, "online": d.online or fresh, "hidden": bool(o.get("hidden")),
                 "entities": [e.as_dict() for e in d.entities.values()],
             })
         devs.sort(key=lambda x: (x["room"] == "Без комнаты", x["room"], x["name"]))
@@ -198,6 +204,33 @@ class Hub:
             "SELECT ts, value FROM samples WHERE entity=? AND ts>=? ORDER BY ts", (entity_id, since)
         ).fetchall()
         return [[round(t), v] for t, v in rows]
+
+
+    def sparks(self, hours=24.0, buckets=36, keys=("temperature", "humidity")):
+        """Короткие ряды для мини-графиков: {entity_id: [значения по равным отрезкам времени]}."""
+        now = time.time()
+        since = now - hours * 3600
+        step = hours * 3600 / buckets
+        out = {}
+        for d in self.devices.values():
+            for e in d.entities.values():
+                if e.key not in keys:
+                    continue
+                rows = self._db.execute("SELECT ts, value FROM samples WHERE entity=? AND ts>=? ORDER BY ts",
+                                        (e.id, since)).fetchall()
+                if len(rows) < 2:
+                    continue
+                sums = [[0.0, 0] for _ in range(buckets)]
+                for t, v in rows:
+                    b = min(buckets - 1, int((t - since) / step))
+                    sums[b][0] += v
+                    sums[b][1] += 1
+                vals, last = [], None
+                for s, n in sums:
+                    last = round(s / n, 2) if n else last
+                    vals.append(last)
+                out[e.id] = [v for v in vals if v is not None]
+        return out
 
 
 class Driver:
