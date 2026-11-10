@@ -547,7 +547,7 @@ const actions = {
     catch (e) { s.video = { err: "Видео не получено. " + e.message }; }
     if (sheet === s) { drawSheet(); const v = $("#devVideo video"); let tries = 0; const arm = () => { const v = $("#devVideo video"); if (!v) return;
       v.onerror = () => { if (sheet !== s) return;
-        if (tries++ < 2) return setTimeout(() => { if (sheet === s && s.video?.url) { drawSheet(); arm(); } }, 4000);   // трансляция может стартовать не сразу
+        if (tries++ < 10) return setTimeout(() => { if (sheet === s && s.video?.url) { drawSheet(); arm(); } }, 4000);   // трансляция может стартовать не сразу
         s.video = { err: "Камера выдала ссылку, но браузер не смог её воспроизвести." }; drawSheet(); }; };
       arm(); } },
   pick(t) { sheet.eid = t.dataset.e; sheet.data = null; drawSheet(); loadHistory(); },
