@@ -92,6 +92,40 @@ def map_spec(spec: dict) -> list[dict]:
     return out
 
 
+# события, из которых складывается состояние датчика: имя -> (наш ключ, значение)
+EVENT_MAP = {
+    "submersion-detected": ("leak", True), "no-submersion": ("leak", False),
+    "open": ("contact", True), "close": ("contact", False),
+    "motion-detected": ("motion", True),
+}
+# то же для старого журнала устройств Aqara (device_log)
+LOG_MAP = {"event.leak": ("leak", True), "event.no_leak": ("leak", False),
+           "event.open": ("contact", True), "event.close": ("contact", False),
+           "event.motion": ("motion", True)}
+MOTION_HOLD = 120   # секунд считаем «движение» после события
+
+
+def map_events(spec: dict, have: set) -> list[dict]:
+    """События датчиков, которые сообщают состояние только событиями (протечка, дверь, движение)."""
+    out = []
+    for srv in spec.get("services") or []:
+        for ev in srv.get("events") or []:
+            m = EVENT_MAP.get(urn_name(ev.get("type")))
+            if m and m[0] not in have:
+                out.append({"key": m[0], "value": m[1], "ekey": f"{srv['iid']}.{ev['iid']}"})
+    return out
+
+
+def state_from_events(key, records, now):
+    """records: [(время, значение)]. Возвращает текущее состояние."""
+    if not records:
+        return False            # событий не было: сухо / закрыто / тихо
+    t, v = max(records)
+    if key == "motion":
+        return now - t < MOTION_HOLD
+    return v
+
+
 def spec_summary(spec: dict) -> list[str]:
     """Краткий перечень того, что умеет устройство (для диагностики)."""
     out = []
@@ -133,6 +167,7 @@ class XiaomiDriver(Driver):
         self._wake = asyncio.Event()
         self._devs = {}       # did -> {country, items, raw}
         self._codes = {}      # (did, siid, piid) -> код последнего ответа облака
+        self._evlog = {}      # did -> что ответило облако про события
         self._model_urns = None
 
     # ---- вход (вызывается из панели) --------------------------------
@@ -248,8 +283,10 @@ class XiaomiDriver(Driver):
                 did = str(d.get("did"))
                 model = d.get("model") or ""
                 spec = await self._spec(model, d.get("spec_type")) if model else None
+                items = map_spec(spec) if spec else []
                 devs[did] = {"country": country, "raw": d,
-                             "items": map_spec(spec) if spec else [],
+                             "items": items,
+                             "events": map_events(spec, {i["key"] for i in items}) if spec else [],
                              "category": urn_name(spec.get("type")) if spec else "",
                              "spec": spec_summary(spec) if spec else [],
                              "room": rooms.get(did, "")}
@@ -273,6 +310,45 @@ class XiaomiDriver(Driver):
         for country, items in by_country.items():
             for r in await self.cloud.get_props(country, items):
                 self._apply(r)
+        for did, x in self._devs.items():
+            if x.get("events"):
+                try:
+                    await self._poll_events(did, x)
+                except AuthError:
+                    raise
+                except Exception as e:
+                    self._evlog[did] = f"ошибка: {type(e).__name__}: {e}"[:200]
+
+    async def _poll_events(self, did, x):
+        now = time.time()
+        by_key, log, seen = {}, [], 0     # seen — сколько записей журнала облако вообще отдало
+        for ev in x["events"]:
+            rows = await self.cloud.last_records(x["country"], did, ev["ekey"])
+            seen += len(rows)
+            log.append(f"{ev['ekey']}: {len(rows)} зап." + (f", последняя {int(now - rows[0].get('time', 0))} с назад" if rows else ""))
+            by_key.setdefault(ev["key"], []).extend((r.get("time", 0), ev["value"]) for r in rows)
+        if not any(by_key.values()):
+            # у старых датчиков Aqara события лежат в общем журнале device_log
+            try:
+                rows = await self.cloud.last_records(x["country"], did, "device_log", type_="prop", limit=5)
+                seen += len(rows)
+                log.append(f"device_log: {len(rows)} зап." + (f" {str(rows[0].get('value'))[:80]}" if rows else ""))
+                for r in rows:
+                    val = json.loads(r.get("value") or "[]")
+                    for item in val[1:] if isinstance(val, list) else []:
+                        m = LOG_MAP.get(item[0] if isinstance(item, list) and item else None)
+                        if m and m[0] in by_key:
+                            by_key[m[0]].append((val[0] if isinstance(val[0], (int, float)) else r.get("time", 0), m[1]))
+            except AuthError:
+                raise
+            except Exception as e:
+                log.append(f"device_log: ошибка {type(e).__name__}")
+        self._evlog[did] = "; ".join(log)
+        if not seen:
+            # облако не отдало ни одной записи: нельзя утверждать «сухо», оставляем «нет данных»
+            return
+        for key, recs in by_key.items():
+            self.hub.update(f"xiaomi:{did}", key, key, state_from_events(key, recs, now), ts=now)
 
     def _apply(self, r):
         did = str(r.get("did"))
@@ -309,5 +385,6 @@ class XiaomiDriver(Driver):
                         "mapped": [f"{i['eid']} {i['siid']}.{i['piid']} код={self._codes.get((did, i['siid'], i['piid']))}"
                                    for i in x["items"]],
                         "spec": x.get("spec"),
+                        "events": self._evlog.get(did),
                         "list_prop": d.get("prop"), "list_event": d.get("event")})
         return out

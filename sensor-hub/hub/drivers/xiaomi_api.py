@@ -276,6 +276,15 @@ class XiaomiCloud:
             out += res or []
         return out
 
+    async def last_records(self, country, did, key, type_="event", days=30, limit=3):
+        """Последние записи журнала устройства (события или свойства), новые первыми."""
+        now = int(time.time())
+        res = await self.call(country, "/user/get_user_device_data", {
+            "did": did, "key": key, "type": type_,
+            "time_start": now - days * 86400, "time_end": now + 60, "limit": limit})
+        rows = res if isinstance(res, list) else []
+        return sorted(rows, key=lambda r: r.get("time", 0), reverse=True)
+
     async def set_prop(self, country, did, siid, piid, value):
         res = await self.call(country, "/miotspec/prop/set",
                               {"params": [{"did": did, "siid": siid, "piid": piid, "value": value}]})

@@ -14,7 +14,7 @@ from hub.core import Hub
 from hub.drivers import ble_parsers as bp
 from hub.drivers import xiaomi_api as xa
 from hub.drivers.shelly import ShellyDriver
-from hub.drivers.xiaomi import XiaomiDriver, map_spec
+from hub.drivers.xiaomi import XiaomiDriver, map_events, map_spec, state_from_events
 from hub.server import make_app
 
 HERE = Path(__file__).parent
@@ -100,6 +100,28 @@ class Spec(unittest.TestCase):
         self.assertEqual([i["key"] for i in map_spec(SPEC)][:1], ["temperature"])
 
 
+LEAK_SPEC = {"type": "urn:miot-spec-v2:device:submersion-sensor:0000A012:lumi-aq1:1", "services": [
+    {"iid": 2, "type": "urn:miot-spec-v2:service:submersion-sensor:00007839:lumi-aq1:1", "events": [
+        {"iid": 1, "type": "urn:miot-spec-v2:event:submersion-detected:00005002:lumi-aq1:1"},
+        {"iid": 2, "type": "urn:miot-spec-v2:event:no-submersion:00005003:lumi-aq1:1"}]},
+    {"iid": 3, "type": "urn:miot-spec-v2:service:battery:00007805:lumi-aq1:1", "events": [
+        {"iid": 1, "type": "urn:miot-spec-v2:event:low-battery:00005003:lumi-aq1:1"}]}]}
+
+
+class Events(unittest.TestCase):
+    def test_map(self):
+        self.assertEqual(map_events(LEAK_SPEC, set()), [{"key": "leak", "value": True, "ekey": "2.1"},
+                                                        {"key": "leak", "value": False, "ekey": "2.2"}])
+        self.assertEqual(map_events(LEAK_SPEC, {"leak"}), [])
+
+    def test_state(self):
+        self.assertIs(state_from_events("leak", [], 1000), False)
+        self.assertIs(state_from_events("leak", [(500, True), (400, False)], 1000), True)
+        self.assertIs(state_from_events("leak", [(500, True), (600, False)], 1000), False)
+        self.assertIs(state_from_events("motion", [(950, True)], 1000), True)
+        self.assertIs(state_from_events("motion", [(500, True)], 1000), False)
+
+
 def fake_cloud(log):
     """Имитация облака Xiaomi: проверяет подпись, отвечает зашифрованно."""
     values = {("blt.3.abc", 2, 1): 21.5, ("blt.3.abc", 2, 2): 48.0, ("blt.3.abc", 3, 1): 77, ("plug1", 2, 1): False}
@@ -118,7 +140,19 @@ def fake_cloud(log):
             res = {"list": [
                 {"did": "blt.3.abc", "name": "Термометр спальня", "model": "miaomiaoce.sensor_ht.t2", "isOnline": True,
                  "spec_type": SPEC["type"], "token": "SECRET"},
-                {"did": "plug1", "name": "Розетка", "model": "x.plug.v1", "isOnline": True, "spec_type": "urn:plug"}]}
+                {"did": "plug1", "name": "Розетка", "model": "x.plug.v1", "isOnline": True, "spec_type": "urn:plug"},
+                {"did": "lumi.wet", "name": "Протечка кухня", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
+                {"did": "lumi.dry", "name": "Протечка туалет", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
+                {"did": "lumi.mute", "name": "Протечка без журнала", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"}]}
+        elif path == "/user/get_user_device_data":
+            import time as _t
+            res = []
+            if data["did"] == "lumi.wet" and data["type"] == "event":
+                res = [{"did": "lumi.wet", "key": data["key"], "type": "event", "value": "[]",
+                        "time": int(_t.time()) - (100 if data["key"] == "2.1" else 5000)}]
+            if data["did"] == "lumi.dry" and data["key"] == "device_log":
+                res = [{"did": "lumi.dry", "key": "device_log", "type": "prop", "time": int(_t.time()) - 900,
+                        "value": json.dumps([int(_t.time()) - 900, ["prop.battery", [3005]]])}]
         elif path == "/v2/homeroom/gethome":
             res = {"homelist": [{"roomlist": [{"name": "Спальня", "dids": ["blt.3.abc"]}]}]}
         elif path == "/miotspec/prop/get":
@@ -148,7 +182,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         drv.cloud.api_url = lambda c: str(srv.make_url("/app"))
 
         async def spec(url):
-            return SPEC if "miaomiaoce" in url else PLUG_SPEC
+            return SPEC if "miaomiaoce" in url else LEAK_SPEC if "leak" in url else PLUG_SPEC
         drv._fetch_json = spec
         task = asyncio.create_task(drv.run())
         for _ in range(50):
@@ -161,6 +195,10 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t["room"], "Спальня")
         self.assertEqual({e["key"]: e["value"] for e in t["entities"]},
                          {"temperature": 21.5, "humidity": 48.0, "battery": 77})
+        self.assertIs(hub.find_entity("xiaomi:lumi.wet/leak")[1].value, True)
+        self.assertIs(hub.find_entity("xiaomi:lumi.dry/leak")[1].value, False)
+        self.assertEqual(snap["xiaomi:lumi.wet"]["category"], "submersion-sensor")
+        self.assertEqual(snap["xiaomi:lumi.mute"]["entities"], [])   # нет записей — не утверждаем «сухо»
         dev, ent = hub.find_entity("xiaomi:plug1/switch")
         self.assertIs(ent.value, False)
         await drv.set(dev, ent, True)
