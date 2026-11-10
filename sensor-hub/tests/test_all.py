@@ -262,6 +262,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap["xiaomi:cam1"]["caps"], ["video"])
         self.assertEqual((await drv.video(cam))["url"], "https://video.example/live.m3u8")
         self.assertEqual(log[-1], ("/miotspec/action", {"params": {"did": "cam1", "siid": 4, "aiid": 1, "in": [0]}}))
+        self.assertEqual(log[-2], ("/miotspec/action", {"params": {"did": "cam1", "siid": 4, "aiid": 2, "in": []}}))
         self.assertEqual(snap["xiaomi:cam1"]["extra"]["quality"][2], {"value": 2, "label": "360p"})
         wm = cam.entities["time_watermark"]
         self.assertEqual((wm.kind, wm.value), ("toggle", True))

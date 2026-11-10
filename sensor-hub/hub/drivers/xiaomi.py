@@ -144,8 +144,10 @@ def find_stream(spec: dict):
                     qpos = n
                     quality = [{"value": o["value"], "label": quality_label(o.get("description"))} for o in lst]
             outs = [urn_name((props.get(p) or {}).get("type")) for p in act.get("out") or []]
+            stop = next((a["iid"] for a in srv.get("actions") or []
+                         if urn_name(a.get("type")) == "stop-stream" and not a.get("in")), None)
             return {"siid": srv["iid"], "aiid": act["iid"], "in": args, "out": outs,
-                    "quality": quality, "qpos": qpos}
+                    "quality": quality, "qpos": qpos, "stop": stop}
     return None
 
 
@@ -496,9 +498,20 @@ class XiaomiDriver(Driver):
         st = x.get("stream")
         if not st:
             raise RuntimeError("У этой камеры нет службы трансляции")
+        # сначала закрываем прежнюю трансляцию: зависшая не даёт камере начать новую
+        stopped = ""
+        if st.get("stop"):
+            try:
+                r0 = await self.cloud.action(x["country"], did, st["siid"], st["stop"], [])
+                stopped = f"стоп: код={r0.get('code')} | "
+            except AuthError:
+                raise
+            except Exception as e:
+                stopped = f"стоп: {type(e).__name__}: {e} | "[:120]
+            await asyncio.sleep(1.5)
         res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], st["in"])
         out = res.get("out") or []
-        self._evlog[did] = f"видео: код={res.get('code')} out={str(out)[:300]}"
+        self._evlog[did] = f"{stopped}видео: код={res.get('code')} out={str(out)[:300]}"
         url = None
         if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
             url = out[st["out"].index("stream-address")]
@@ -506,15 +519,21 @@ class XiaomiDriver(Driver):
             url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
         if not url:
             raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
-        # проверяем ссылку со стороны хаба: что по ней отдаётся на самом деле
+        # проверяем ссылку со стороны хаба: камере нужно несколько секунд, чтобы начать передачу
+        codes = []
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
-                async with s.get(url) as r:
-                    body = (await r.content.read(400)).decode("utf-8", "replace")
-                    self._evlog[did] += (f" | проверка: HTTP {r.status}, тип {r.headers.get('Content-Type')}, "
-                                         f"начало: {body[:300]!r}")
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
+                for n in range(7):
+                    async with s.get(url) as r:
+                        body = (await r.content.read(400)).decode("utf-8", "replace")
+                        codes.append(r.status)
+                        last = f"тип {r.headers.get('Content-Type')}, начало: {body[:300]!r}"
+                    if r.status == 200:
+                        break
+                    await asyncio.sleep(2)
+            self._evlog[did] += f" | проверка: HTTP {codes}, {last}"
         except Exception as e:
-            self._evlog[did] += f" | проверка: {type(e).__name__}: {e}"[:200]
+            self._evlog[did] += f" | проверка: HTTP {codes}, {type(e).__name__}: {e}"[:200]
         return {"url": url}
 
     def diagnostics(self):
