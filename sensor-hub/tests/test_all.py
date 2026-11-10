@@ -14,7 +14,7 @@ from hub.core import Hub
 from hub.drivers import ble_parsers as bp
 from hub.drivers import xiaomi_api as xa
 from hub.drivers.shelly import ShellyDriver
-from hub.drivers.xiaomi import XiaomiDriver, map_controls, map_events, map_spec, option_label, state_from_events
+from hub.drivers.xiaomi import XiaomiDriver, find_stream, map_controls, map_events, map_spec, option_label, state_from_events
 from hub.server import make_app
 
 HERE = Path(__file__).parent
@@ -118,6 +118,32 @@ HUM_SPEC = {"type": "urn:miot-spec-v2:device:humidifier:0000A00E:deerma-mjjsq:1"
         {"iid": 1, "type": "urn:miot-spec-v2:property:relative-humidity:0000000C:deerma-mjjsq:1", "format": "uint8", "access": ["read", "notify"]}]}]}
 
 
+CAM_SPEC = {"type": "urn:miot-spec-v2:device:camera:0000A01C:chuangmi-ipc021:1", "services": [
+    {"iid": 2, "type": "urn:miot-spec-v2:service:camera-control:0000782F:chuangmi-ipc021:1", "description": "Camera Control", "properties": [
+        {"iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:x:1", "format": "bool", "access": ["read", "write", "notify"]},
+        {"iid": 3, "type": "urn:miot-spec-v2:property:night-shot:00000057:x:1", "format": "uint8", "access": ["read", "write", "notify"],
+         "value-list": [{"value": 0, "description": "Auto"}, {"value": 1, "description": "Off"}, {"value": 2, "description": "On"}]},
+        {"iid": 4, "type": "urn:miot-spec-v2:property:time-watermark:00000087:x:1", "format": "bool", "access": ["read", "write", "notify"]},
+        {"iid": 8, "type": "urn:miot-spec-v2:property:motion-tracking:0000008A:x:1", "format": "bool", "access": ["read", "notify"]}]},
+    {"iid": 4, "type": "urn:miot-spec-v2:service:camera-stream-for-google-home:00007831:x:1", "properties": [
+        {"iid": 1, "type": "urn:miot-spec-v2:property:video-codec-type:00000083:x:1", "format": "uint8", "access": []},
+        {"iid": 2, "type": "urn:miot-spec-v2:property:video-attribute:00000084:x:1", "format": "uint8", "access": [],
+         "value-list": [{"value": 0, "description": "1920_1080_20"}]},
+        {"iid": 5, "type": "urn:miot-spec-v2:property:stream-address:0000005E:x:1", "format": "string", "access": []}],
+     "actions": [{"iid": 1, "type": "urn:miot-spec-v2:action:start-hls-stream:0000281C:x:1", "in": [2], "out": [5]},
+                 {"iid": 2, "type": "urn:miot-spec-v2:action:stop-stream:00002822:x:1", "in": [], "out": []}]}]}
+
+
+class Camera(unittest.TestCase):
+    def test_camera(self):
+        c = {i["key"]: i for i in map_controls(CAM_SPEC)}
+        self.assertEqual(sorted(c), ["night_shot", "time_watermark"])
+        self.assertEqual(c["time_watermark"]["kind"], "toggle")
+        self.assertEqual([o["label"] for o in c["night_shot"]["opts"]["options"]], ["Авто", "Выкл", "Вкл"])
+        self.assertEqual(find_stream(CAM_SPEC), {"siid": 4, "aiid": 1, "in": [0], "out": ["stream-address"]})
+        self.assertIsNone(find_stream(HUM_SPEC))
+
+
 class Controls(unittest.TestCase):
     def test_humidifier(self):
         c = {i["key"]: i for i in map_controls(HUM_SPEC)}
@@ -146,7 +172,8 @@ class Events(unittest.TestCase):
 def fake_cloud(log):
     """Имитация облака Xiaomi: проверяет подпись, отвечает зашифрованно."""
     values = {("blt.3.abc", 2, 1): 21.5, ("blt.3.abc", 2, 2): 48.0, ("blt.3.abc", 3, 1): 77, ("plug1", 2, 1): False,
-              ("hum1", 2, 1): True, ("hum1", 2, 2): 1, ("hum1", 2, 3): 50, ("hum1", 3, 1): 65}
+              ("hum1", 2, 1): True, ("hum1", 2, 2): 1, ("hum1", 2, 3): 50, ("hum1", 3, 1): 65,
+              ("cam1", 2, 1): True, ("cam1", 2, 3): 0, ("cam1", 2, 4): True}
 
     async def handler(request):
         q = dict(request.query)
@@ -163,6 +190,7 @@ def fake_cloud(log):
                 {"did": "blt.3.abc", "name": "Термометр спальня", "model": "miaomiaoce.sensor_ht.t2", "isOnline": True,
                  "spec_type": SPEC["type"], "token": "SECRET"},
                 {"did": "plug1", "name": "Розетка", "model": "x.plug.v1", "isOnline": True, "spec_type": "urn:plug"},
+                {"did": "cam1", "name": "Камера", "model": "chuangmi.camera.ipc021", "isOnline": True, "spec_type": "urn:cam"},
                 {"did": "hum1", "name": "Увлажнитель", "model": "deerma.humidifier.mjjsq", "isOnline": True, "spec_type": "urn:hum"},
                 {"did": "lumi.wet", "name": "Протечка кухня", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
                 {"did": "lumi.dry", "name": "Протечка туалет", "model": "lumi.sensor_wleak.aq1", "isOnline": True, "spec_type": "urn:leak"},
@@ -180,6 +208,8 @@ def fake_cloud(log):
             res = {"homelist": [{"roomlist": [{"name": "Спальня", "dids": ["blt.3.abc"]}]}]}
         elif path == "/miotspec/prop/get":
             res = [{**p, "code": 0, "value": values[(p["did"], p["siid"], p["piid"])]} for p in data["params"]]
+        elif path == "/miotspec/action":
+            res = {"code": 0, "out": ["https://video.example/live.m3u8"]} if data["params"]["in"] == [0] else {"code": -1}
         elif path == "/miotspec/prop/set":
             for p in data["params"]:
                 values[(p["did"], p["siid"], p["piid"])] = p["value"]
@@ -205,7 +235,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         drv.cloud.api_url = lambda c: str(srv.make_url("/app"))
 
         async def spec(url):
-            return SPEC if "miaomiaoce" in url else LEAK_SPEC if "leak" in url else HUM_SPEC if "hum" in url else PLUG_SPEC
+            return SPEC if "miaomiaoce" in url else LEAK_SPEC if "leak" in url else HUM_SPEC if "hum" in url else CAM_SPEC if "cam" in url else PLUG_SPEC
         drv._fetch_json = spec
         task = asyncio.create_task(drv.run())
         for _ in range(50):
@@ -226,6 +256,16 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertIs(ent.value, False)
         await drv.set(dev, ent, True)
         self.assertEqual(log[-1], ("/miotspec/prop/set", {"params": [{"did": "plug1", "siid": 2, "piid": 1, "value": True}]}))
+        cam = hub.devices["xiaomi:cam1"]
+        self.assertEqual(snap["xiaomi:cam1"]["caps"], ["video"])
+        self.assertEqual(await drv.video(cam), "https://video.example/live.m3u8")
+        self.assertEqual(log[-1], ("/miotspec/action", {"params": {"did": "cam1", "siid": 4, "aiid": 1, "in": [0]}}))
+        wm = cam.entities["time_watermark"]
+        self.assertEqual((wm.kind, wm.value), ("toggle", True))
+        await drv.set(cam, wm, False)
+        self.assertIs(log[-1][1]["params"][0]["value"], False)
+        with self.assertRaises(RuntimeError):
+            await drv.video(hub.devices["xiaomi:plug1"])
         hdev, th = hub.find_entity("xiaomi:hum1/target_humidity")
         self.assertEqual((th.kind, th.value, th.opts["max"]), ("number", 50, 70))
         await drv.set(hdev, th, 99)          # выше предела — обрезается до 70

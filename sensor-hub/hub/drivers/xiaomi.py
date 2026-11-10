@@ -94,7 +94,10 @@ def map_spec(spec: dict) -> list[dict]:
 
 # настройки, которыми можно управлять: имя свойства -> наш ключ
 CONTROL_MAP = {"target-humidity": "target_humidity", "target-temperature": "target_temperature",
-               "fan-level": "fan_level", "brightness": "brightness", "mode": "mode"}
+               "fan-level": "fan_level", "brightness": "brightness", "mode": "mode",
+               "night-shot": "night_shot", "recording-mode": "recording_mode",
+               "image-rollover": "image_rollover", "time-watermark": "time_watermark",
+               "wdr-mode": "wdr_mode", "glimmer-full-color": "full_color"}
 
 
 def option_label(text) -> str:
@@ -109,7 +112,27 @@ def option_label(text) -> str:
     return {"auto": "Авто", "humidity": "Авто (по влажности)", "const humidity": "Авто (по влажности)",
             "sleep": "Ночной", "silent": "Тихий", "low": "Слабо", "medium": "Средне", "mid": "Средне",
             "high": "Сильно", "strong": "Сильно", "favorite": "Свой", "standard": "Обычный",
-            "natural wind": "Естественный", "straight wind": "Прямой", "idle": "Ожидание"}.get(low, t)
+            "natural wind": "Естественный", "straight wind": "Прямой", "idle": "Ожидание",
+            "on": "Вкл", "off": "Выкл", "open": "Вкл", "close": "Выкл",
+            "not recording": "Не записывать", "all record": "Постоянно",
+            "motion record": "По движению"}.get(low, t)
+
+
+def find_stream(spec: dict):
+    """Найти в описании камеры команду запуска трансляции HLS (служба для Google Home)."""
+    for srv in spec.get("services") or []:
+        props = {p["iid"]: p for p in srv.get("properties") or []}
+        for act in srv.get("actions") or []:
+            if urn_name(act.get("type")) != "start-hls-stream":
+                continue
+            args = []
+            for piid in act.get("in") or []:
+                lst = (props.get(piid) or {}).get("value-list") or []
+                rng = (props.get(piid) or {}).get("value-range") or [0]
+                args.append(lst[0]["value"] if lst else rng[0])
+            outs = [urn_name((props.get(p) or {}).get("type")) for p in act.get("out") or []]
+            return {"siid": srv["iid"], "aiid": act["iid"], "in": args, "out": outs}
+    return None
 
 
 def map_controls(spec: dict) -> list[dict]:
@@ -127,7 +150,9 @@ def map_controls(spec: dict) -> list[dict]:
             item = {"key": key, "eid": key, "siid": srv["iid"], "piid": prop["iid"], "writable": True,
                     "name": None, "float": prop.get("format") == "float"}
             rng, lst = prop.get("value-range"), prop.get("value-list")
-            if lst:
+            if prop.get("format") == "bool":
+                item["kind"] = "toggle"
+            elif lst:
                 item["kind"] = "select"
                 item["opts"] = {"options": [{"value": o.get("value"), "label": option_label(o.get("description"))}
                                             for o in lst]}
@@ -337,6 +362,7 @@ class XiaomiDriver(Driver):
                              "items": items,
                              "events": map_events(spec, {i["key"] for i in items}) if spec else [],
                              "category": urn_name(spec.get("type")) if spec else "",
+                             "stream": find_stream(spec) if spec else None,
                              "spec": spec_summary(spec) if spec else [],
                              "room": rooms.get(did, "")}
         for did in set(self._devs) - set(devs):
@@ -346,7 +372,7 @@ class XiaomiDriver(Driver):
             d = x["raw"]
             self.hub.device(f"xiaomi:{did}", name=d.get("name") or d.get("model") or did,
                             driver=self.name, model=d.get("model") or "", room=x["room"],
-                            category=x["category"],
+                            category=x["category"], caps=("video",) if x.get("stream") else (),
                             online=bool(d.get("isOnline", True)))
         self.hub.notify()
 
@@ -434,6 +460,24 @@ class XiaomiDriver(Driver):
         await self.cloud.set_prop(x["country"], did, it["siid"], it["piid"], value)
         self.hub.update(device.id, eid, it["key"], value, writable=True)
 
+    async def video(self, device):
+        did = device.id.split(":", 1)[1]
+        x = self._devs.get(did) or {}
+        st = x.get("stream")
+        if not st:
+            raise RuntimeError("У этой камеры нет службы трансляции")
+        res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], st["in"])
+        out = res.get("out") or []
+        self._evlog[did] = f"видео: код={res.get('code')} out={str(out)[:300]}"
+        url = None
+        if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
+            url = out[st["out"].index("stream-address")]
+        if not (isinstance(url, str) and url.startswith("http")):
+            url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
+        if not url:
+            raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
+        return url
+
     def diagnostics(self):
         """Список устройств без секретов — для разбора, если что-то не отображается."""
         out = []
@@ -446,6 +490,6 @@ class XiaomiDriver(Driver):
                         "mapped": [f"{i['eid']} {i['siid']}.{i['piid']} код={self._codes.get((did, i['siid'], i['piid']))}"
                                    for i in x["items"]],
                         "spec": x.get("spec"),
-                        "events": self._evlog.get(did),
+                        "events": self._evlog.get(did), "stream": x.get("stream"),
                         "list_prop": d.get("prop"), "list_event": d.get("event")})
         return out

@@ -37,6 +37,13 @@ KEYS = {
     "brightness": ("Яркость", "%", "number"),
     "fan_level": ("Режим", "", "select"),
     "mode": ("Режим работы", "", "select"),
+    "night_shot": ("Ночной режим", "", "select"),
+    "recording_mode": ("Запись на карту", "", "select"),
+    "image_rollover": ("Переворот изображения", "°", "number"),
+    # toggle — настройка «да/нет», показывается только в карточке устройства
+    "time_watermark": ("Метка времени на видео", "", "toggle"),
+    "wdr_mode": ("Расширенный диапазон (WDR)", "", "toggle"),
+    "full_color": ("Цвет при слабом свете", "", "toggle"),
 }
 
 
@@ -67,6 +74,7 @@ class Device:
     room: str = ""
     online: bool = True
     category: str = ""
+    caps: tuple = ()        # дополнительные возможности, например "video"
     entities: dict = field(default_factory=dict)
 
 
@@ -89,15 +97,16 @@ class Hub:
         self._last_prune = 0.0
 
     # ---- устройства -------------------------------------------------
-    def device(self, dev_id, *, name, driver, model="", room="", online=True, category="") -> Device:
+    def device(self, dev_id, *, name, driver, model="", room="", online=True, category="", caps=()) -> Device:
         d = self.devices.get(dev_id)
         if d is None:
-            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online, category)
+            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online, category, tuple(caps))
             self.notify()
         else:
             changed = (d.name, d.model, d.room, d.online) != (name, model or d.model, room or d.room, online)
             d.name, d.model, d.room, d.online = name, model or d.model, room or d.room, online
             d.category = category or d.category
+            d.caps = tuple(caps) or d.caps
             if changed:
                 self.notify()
         return d
@@ -114,7 +123,7 @@ class Hub:
         if e is None:
             e = d.entities[eid] = Entity(full, key, kind or def_kind, name or label,
                                          def_unit if unit is None else unit, writable=writable, opts=opts)
-        if e.kind in ("binary", "switch") and value is not None:
+        if e.kind in ("binary", "switch", "toggle") and value is not None:
             value = bool(value)
         elif isinstance(value, float):
             value = round(value, 2)
@@ -167,7 +176,7 @@ class Hub:
             devs.append({
                 "id": d.id, "name": o.get("name") or d.name, "orig_name": d.name,
                 "room": o.get("room") or d.room or "Без комнаты", "driver": d.driver,
-                "model": d.model, "category": d.category, "online": d.online or fresh, "hidden": bool(o.get("hidden")),
+                "model": d.model, "category": d.category, "caps": list(d.caps), "online": d.online or fresh, "hidden": bool(o.get("hidden")),
                 "entities": [e.as_dict() for e in d.entities.values()],
             })
         devs.sort(key=lambda x: (x["room"] == "Без комнаты", x["room"], x["name"]))
@@ -262,3 +271,6 @@ class Driver:
 
     async def set(self, device: Device, entity: Entity, value):
         raise RuntimeError("Это устройство не управляется")
+
+    async def video(self, device: Device) -> str:
+        raise RuntimeError("У этого устройства нет видео")

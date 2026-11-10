@@ -285,6 +285,11 @@ class XiaomiCloud:
         rows = res if isinstance(res, list) else []
         return sorted(rows, key=lambda r: r.get("time", 0), reverse=True)
 
+    async def action(self, country, did, siid, aiid, args):
+        res = await self.call(country, "/miotspec/action",
+                              {"params": {"did": did, "siid": siid, "aiid": aiid, "in": args}})
+        return res if isinstance(res, dict) else {}
+
     async def set_prop(self, country, did, siid, piid, value):
         res = await self.call(country, "/miotspec/prop/set",
                               {"params": [{"did": did, "siid": siid, "piid": piid, "value": value}]})

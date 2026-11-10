@@ -93,6 +93,13 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
         await hub.drivers[dev.driver].set(dev, ent, body.get("value"))
         return web.json_response({"ok": True})
 
+    async def video(request):
+        body = await request.json()
+        dev = hub.devices.get(body.get("id", ""))
+        if not dev:
+            raise RuntimeError("Нет такого устройства")
+        return web.json_response({"url": await hub.drivers[dev.driver].video(dev)})
+
     async def edit_device(request):
         body = await request.json()
         if body.get("id") not in hub.devices:
@@ -130,6 +137,7 @@ def make_app(cfg: dict, data_dir: Path) -> web.Application:
     app.router.add_get("/api/events", events)
     app.router.add_post("/api/set", set_value)
     app.router.add_post("/api/device", edit_device)
+    app.router.add_post("/api/video", video)
     app.router.add_get("/api/history", history)
     app.router.add_get("/api/sparks", sparks)
     app.router.add_post("/api/xiaomi/login", xiaomi_login)

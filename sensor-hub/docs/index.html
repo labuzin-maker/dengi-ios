@@ -161,6 +161,8 @@ details > div { display: flex; flex-direction: column; gap: 10px; padding-top: 1
 .qr img { width: 200px; height: 200px; border-radius: 8px; background: #fff; }
 .err { color: var(--crit); font-size: 14px; }
 .hint { font-size: 13px; color: var(--muted); }
+.video { display: flex; flex-direction: column; gap: 8px; }
+.video video { width: 100%; max-width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; display: block; }
 .ctls { display: flex; flex-direction: column; }
 .ctls:empty { display: none; }
 .ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -290,6 +292,10 @@ function startDemo() {
       ["target_humidity", "number", "Целевая влажность", "%", 50, true, { min: 40, max: 70, step: 1 }],
       ["fan_level", "select", "Режим", "", 2, true, { options: [{ value: 1, label: "Скорость 1" }, { value: 2, label: "Скорость 2" }, { value: 3, label: "Скорость 3" }, { value: 4, label: "Авто (по влажности)" }] }]]),
     mk("d11", "Ночник", "Детская", "light", [S("switch", "Свет", false)]),
+    Object.assign(mk("d12", "Видеокамера", "Гостиная", "camera", [S("switch", "Камера", true),
+      ["night_shot", "select", "Ночной режим", "", 0, true, { options: [{ value: 0, label: "Авто" }, { value: 1, label: "Выкл" }, { value: 2, label: "Вкл" }] }],
+      ["recording_mode", "select", "Запись на карту", "", 2, true, { options: [{ value: 0, label: "Не записывать" }, { value: 1, label: "Постоянно" }, { value: 2, label: "По движению" }] }],
+      ["time_watermark", "toggle", "Метка времени на видео", "", true, true]]), { caps: ["video"] }),
   ] };
   for (const d of state.devices) for (const e of d.entities) if (e.key === "temperature" || e.key === "humidity") sparks[e.id] = demoHistory(e, 24, 36).map(p => p[1]);
   render();
@@ -384,6 +390,9 @@ function render() {
     return `<button class="rowb" data-dev="${esc(d.id)}"><span class="ic ${icl}">${ic(icon)}</span><span class="tx"><b>${esc(d.name)}</b><small>${esc(d.room)}${ent(d, "battery")?.value != null ? " · батарея " + ent(d, "battery").value + "%" : ""}</small></span>
       <span class="st ${cls}">${txt}${e && e.ts ? `<small>${esc(ago(e.ts))}</small>` : ""}</span></button>`; }).join("")}</div></section>`);
 
+  const cams = devs.filter(d => (d.caps || []).includes("video") || d.category === "camera");
+  if (cams.length) out.push(`<section class="sec"><h2>Камеры</h2><div class="list">${cams.map(d => { used.add(d.id); const on = ent(d, "switch");
+    return `<button class="rowb" data-dev="${esc(d.id)}"><span class="ic">${ic("cam")}</span><span class="tx"><b>${esc(d.name)}</b><small>${esc(d.room)}${on && on.value != null ? (on.value ? " · включена" : " · выключена") : ""}</small></span><span class="st ${d.online ? "" : "na"}">${d.online ? "Открыть" : "нет связи"}</span></button>`; }).join("")}</div></section>`);
   const sws = devs.flatMap(d => d.entities.filter(e => e.kind === "switch").map(e => [d, e]));
   if (sws.length) out.push(`<section class="sec"><h2>Управление</h2><div class="grid">${sws.map(([d, e]) => {
     used.add(d.id);
@@ -414,7 +423,7 @@ const optLabel = e => ((e.opts?.options || []).find(o => String(o.value) === Str
 function ctlHtml(d) {
   const dis = d.online ? "" : "disabled";
   return d.entities.filter(e => e.writable).map(e => {
-    if (e.kind === "switch") return `<div class="ctl"><span>${esc(e.name.toLowerCase() === d.name.toLowerCase() ? "Питание" : e.name)}</span><button class="tg" role="switch" aria-checked="${!!e.value}" data-sw="${esc(e.id)}" aria-label="${esc(e.name)}" ${dis}><i></i></button></div>`;
+    if (e.kind === "switch" || e.kind === "toggle") return `<div class="ctl"><span>${esc(e.name.toLowerCase() === d.name.toLowerCase() ? "Питание" : e.name)}</span><button class="tg" role="switch" aria-checked="${!!e.value}" data-sw="${esc(e.id)}" aria-label="${esc(e.name)}" ${dis}><i></i></button></div>`;
     if (e.kind === "number") return `<div class="ctl"><span>${esc(e.name)}</span><span class="stepper"><button data-act="num" data-e="${esc(e.id)}" data-d="-1" aria-label="Меньше" ${dis}>−</button><b>${e.value == null ? "—" : fmt(e.key, e.value)}${e.unit ? " " + esc(e.unit) : ""}</b><button data-act="num" data-e="${esc(e.id)}" data-d="1" aria-label="Больше" ${dis}>+</button></span></div>`;
     if (e.kind === "select") return `<div class="ctl col"><span>${esc(e.name)}</span><span class="seg">${(e.opts?.options || []).map(o => `<button data-act="sel" data-e="${esc(e.id)}" data-v="${esc(o.value)}" aria-pressed="${String(o.value) === String(e.value)}" ${dis}>${esc(o.label)}</button>`).join("")}</span></div>`;
     return ""; }).join("") + (d.online || !d.entities.some(e => e.writable) ? "" : `<div class="sub">Устройство не на связи, управление недоступно.</div>`);
@@ -463,7 +472,7 @@ function drawSheet() {
   if (sheet.type === "dev") {
     const d = state.devices.find(x => x.id === sheet.id); if (!d) return closeSheet();
     const list = d.entities.filter(e => e.kind === "sensor" || e.kind === "binary"), e = list.find(x => x.id === sheet.eid);
-    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div><div id="devCtl" class="ctls">${ctlHtml(d)}</div>`;
+    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div>${(d.caps || []).includes("video") ? `<div id="devVideo" class="video">${sheet.video?.url ? `<video src="${esc(sheet.video.url)}" controls autoplay muted playsinline></video>` : `<button class="btn" data-act="video" ${d.online ? "" : "disabled"}>${sheet.video?.loading ? "Запрашиваю видео у камеры…" : "Смотреть видео"}</button>`}${sheet.video?.err ? `<div class="err">${esc(sheet.video.err)}</div>` : ""}</div>` : ""}<div id="devCtl" class="ctls">${ctlHtml(d)}</div>`;
     if (e) {
       const cur = e.kind === "binary" ? (e.value == null ? "—" : (BIN[e.key] || ["Нет", "Да"])[+!!e.value]) : `${fmt(e.key, e.value)}<i>${esc(e.unit)}</i>`;
       h += (list.length > 1 ? `<div class="seg">${list.map(x => `<button data-act="pick" data-e="${esc(x.id)}" aria-pressed="${x.id === e.id}">${esc(x.name)}</button>`).join("")}</div>` : "")
@@ -471,7 +480,7 @@ function drawSheet() {
         <div class="seg">${[[24, "Сутки"], [168, "Неделя"], [720, "Месяц"]].map(([hh, l]) => `<button data-act="period" data-h="${hh}" aria-pressed="${sheet.hours === hh}">${l}</button>`).join("")}</div>
         <div class="chart">${sheet.data ? chart(sheet.data, e, sheet.hours) : `<div class="sub">Загружаю историю…</div>`}</div>`;
     } else h += `<div class="sub">${d.entities.length ? "" : "Это устройство пока не передаёт показаний, которые панель умеет читать."}</div>`;
-    h += `<details ${e ? "" : "open"}><summary>Название, комната, скрыть</summary><div>
+    h += `<details ${e || d.entities.some(x => x.writable) ? "" : "open"}><summary>Название, комната, скрыть</summary><div>
       <label class="field">Название<input id="devName" value="${esc(d.name)}" autocomplete="off"></label>
       <label class="field">Комната<input id="devRoom" value="${esc(d.room === "Без комнаты" ? "" : d.room)}" autocomplete="off" placeholder="Например, Кухня"></label>
       <div class="row"><button class="btn" data-act="saveDev">Сохранить</button><button class="btn ghost" data-act="toggleHide">${d.hidden ? "Показывать на панели" : "Скрыть с панели"}</button></div></div></details>
@@ -531,6 +540,12 @@ const actions = {
   num(t) { const [, e] = findEnt(t.dataset.e); if (!e) return; const o = e.opts || { min: 0, max: 100, step: 1 };
     const cur = e.value == null ? o.min : Number(e.value), v = Math.max(o.min, Math.min(o.max, cur + (+t.dataset.d) * uiStep(o))); if (v !== cur || e.value == null) setEnt(e, v); },
   sel(t) { const [, e] = findEnt(t.dataset.e); if (!e) return; const o = (e.opts?.options || []).find(x => String(x.value) === t.dataset.v); if (o && String(e.value) !== String(o.value)) setEnt(e, o.value); },
+  async video() { const s = sheet;
+    if (mode === "demo") { s.video = { err: "В демо-режиме видео нет: оно запрашивается у настоящей камеры через хаб." }; return drawSheet(); }
+    s.video = { loading: true }; drawSheet();
+    try { s.video = { url: (await api("video", { id: s.id })).url }; }
+    catch (e) { s.video = { err: "Видео не получено. " + e.message }; }
+    if (sheet === s) { drawSheet(); const v = $("#devVideo video"); if (v) v.onerror = () => { s.video = { err: "Камера выдала ссылку, но браузер не смог её воспроизвести." }; if (sheet === s) drawSheet(); }; } },
   pick(t) { sheet.eid = t.dataset.e; sheet.data = null; drawSheet(); loadHistory(); },
   period(t) { sheet.hours = +t.dataset.h; sheet.data = null; drawSheet(); loadHistory(); },
   async saveHub() { let u = $("#hubUrl").value.trim(); if (u && !/^https?:\/\//.test(u)) u = "https://" + u; if (u && !u.endsWith("/")) u += "/";
