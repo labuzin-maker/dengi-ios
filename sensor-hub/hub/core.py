@@ -75,6 +75,7 @@ class Device:
     online: bool = True
     category: str = ""
     caps: tuple = ()        # дополнительные возможности, например "video"
+    extra: dict = None      # сведения для панели, например варианты качества видео
     entities: dict = field(default_factory=dict)
 
 
@@ -97,16 +98,17 @@ class Hub:
         self._last_prune = 0.0
 
     # ---- устройства -------------------------------------------------
-    def device(self, dev_id, *, name, driver, model="", room="", online=True, category="", caps=()) -> Device:
+    def device(self, dev_id, *, name, driver, model="", room="", online=True, category="", caps=(), extra=None) -> Device:
         d = self.devices.get(dev_id)
         if d is None:
-            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online, category, tuple(caps))
+            d = self.devices[dev_id] = Device(dev_id, name, driver, model, room, online, category, tuple(caps), extra)
             self.notify()
         else:
             changed = (d.name, d.model, d.room, d.online) != (name, model or d.model, room or d.room, online)
             d.name, d.model, d.room, d.online = name, model or d.model, room or d.room, online
             d.category = category or d.category
             d.caps = tuple(caps) or d.caps
+            d.extra = extra or d.extra
             if changed:
                 self.notify()
         return d
@@ -176,7 +178,7 @@ class Hub:
             devs.append({
                 "id": d.id, "name": o.get("name") or d.name, "orig_name": d.name,
                 "room": o.get("room") or d.room or "Без комнаты", "driver": d.driver,
-                "model": d.model, "category": d.category, "caps": list(d.caps), "online": d.online or fresh, "hidden": bool(o.get("hidden")),
+                "model": d.model, "category": d.category, "caps": list(d.caps), "extra": d.extra, "online": d.online or fresh, "hidden": bool(o.get("hidden")),
                 "entities": [e.as_dict() for e in d.entities.values()],
             })
         devs.sort(key=lambda x: (x["room"] == "Без комнаты", x["room"], x["name"]))
@@ -272,5 +274,5 @@ class Driver:
     async def set(self, device: Device, entity: Entity, value):
         raise RuntimeError("Это устройство не управляется")
 
-    async def video(self, device: Device) -> str:
+    async def video(self, device: Device, quality=None) -> str:
         raise RuntimeError("У этого устройства нет видео")

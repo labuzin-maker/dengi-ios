@@ -118,6 +118,15 @@ def option_label(text) -> str:
             "motion record": "По движению"}.get(low, t)
 
 
+def quality_label(text) -> str:
+    """'1920_1080_20' -> '1080p', 'Auto' -> 'Авто'."""
+    t = str(text or "")
+    parts = t.split("_")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{parts[1]}p"
+    return "Авто" if t.lower() == "auto" else t
+
+
 def find_stream(spec: dict):
     """Найти в описании камеры команду запуска трансляции HLS (служба для Google Home)."""
     for srv in spec.get("services") or []:
@@ -125,13 +134,18 @@ def find_stream(spec: dict):
         for act in srv.get("actions") or []:
             if urn_name(act.get("type")) != "start-hls-stream":
                 continue
-            args = []
-            for piid in act.get("in") or []:
-                lst = (props.get(piid) or {}).get("value-list") or []
-                rng = (props.get(piid) or {}).get("value-range") or [0]
+            args, quality, qpos = [], [], None
+            for n, piid in enumerate(act.get("in") or []):
+                prop = props.get(piid) or {}
+                lst = prop.get("value-list") or []
+                rng = prop.get("value-range") or [0]
                 args.append(lst[0]["value"] if lst else rng[0])
+                if urn_name(prop.get("type")) == "video-attribute" and len(lst) > 1:
+                    qpos = n
+                    quality = [{"value": o["value"], "label": quality_label(o.get("description"))} for o in lst]
             outs = [urn_name((props.get(p) or {}).get("type")) for p in act.get("out") or []]
-            return {"siid": srv["iid"], "aiid": act["iid"], "in": args, "out": outs}
+            return {"siid": srv["iid"], "aiid": act["iid"], "in": args, "out": outs,
+                    "quality": quality, "qpos": qpos}
     return None
 
 
@@ -373,6 +387,7 @@ class XiaomiDriver(Driver):
             self.hub.device(f"xiaomi:{did}", name=d.get("name") or d.get("model") or did,
                             driver=self.name, model=d.get("model") or "", room=x["room"],
                             category=x["category"], caps=("video",) if x.get("stream") else (),
+                            extra={"quality": x["stream"]["quality"]} if x.get("stream") and x["stream"].get("quality") else None,
                             online=bool(d.get("isOnline", True)))
         self.hub.notify()
 
@@ -398,14 +413,27 @@ class XiaomiDriver(Driver):
         now = time.time()
         by_key, log, seen = {}, [], 0     # seen — сколько записей журнала облако вообще отдало
         for ev in x["events"]:
-            rows = await self.cloud.last_records(x["country"], did, ev["ekey"])
+            rows = await self.cloud.last_records(x["country"], did, ev["ekey"], days=1100)
             seen += len(rows)
             log.append(f"{ev['ekey']}: {len(rows)} зап." + (f", последняя {int(now - rows[0].get('time', 0))} с назад" if rows else ""))
             by_key.setdefault(ev["key"], []).extend((r.get("time", 0), ev["value"]) for r in rows)
-        if not any(by_key.values()):
-            # у старых датчиков Aqara события лежат в общем журнале device_log
+        if not any(by_key.values()) and now - x.get("_fb", 0) > 600:
+            # запасные способы (раз в 10 минут): старые названия событий и общий журнал device_log
+            x["_fb"] = now
+            for name, (key, val) in LOG_MAP.items():
+                if key not in by_key:
+                    continue
+                try:
+                    rows = await self.cloud.last_records(x["country"], did, name, days=1100)
+                except AuthError:
+                    raise
+                except Exception:
+                    continue
+                seen += len(rows)
+                log.append(f"{name}: {len(rows)} зап.")
+                by_key[key].extend((r.get("time", 0), val) for r in rows)
             try:
-                rows = await self.cloud.last_records(x["country"], did, "device_log", type_="prop", limit=5)
+                rows = await self.cloud.last_records(x["country"], did, "device_log", type_="prop", days=1100, limit=5)
                 seen += len(rows)
                 log.append(f"device_log: {len(rows)} зап." + (f" {str(rows[0].get('value'))[:80]}" if rows else ""))
                 for r in rows:
@@ -418,10 +446,12 @@ class XiaomiDriver(Driver):
                 raise
             except Exception as e:
                 log.append(f"device_log: ошибка {type(e).__name__}")
-        self._evlog[did] = "; ".join(log)
-        if not seen:
+        if len(log) > len(x["events"]) or did not in self._evlog:
+            self._evlog[did] = "; ".join(log)
+        if not seen and not x.get("_seen"):
             # облако не отдало ни одной записи: нельзя утверждать «сухо», оставляем «нет данных»
             return
+        x["_seen"] = True
         for key, recs in by_key.items():
             self.hub.update(f"xiaomi:{did}", key, key, state_from_events(key, recs, now), ts=now)
 
@@ -460,15 +490,20 @@ class XiaomiDriver(Driver):
         await self.cloud.set_prop(x["country"], did, it["siid"], it["piid"], value)
         self.hub.update(device.id, eid, it["key"], value, writable=True)
 
-    async def video(self, device):
+    async def video(self, device, quality=None):
         did = device.id.split(":", 1)[1]
         x = self._devs.get(did) or {}
         st = x.get("stream")
         if not st:
             raise RuntimeError("У этой камеры нет службы трансляции")
-        res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], st["in"])
+        args = list(st["in"])
+        if quality is not None and st.get("qpos") is not None:
+            pick = next((q["value"] for q in st["quality"] if str(q["value"]) == str(quality)), None)
+            if pick is not None:
+                args[st["qpos"]] = pick
+        res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], args)
         out = res.get("out") or []
-        self._evlog[did] = f"видео: код={res.get('code')} out={str(out)[:300]}"
+        self._evlog[did] = f"видео: качество={args} код={res.get('code')} out={str(out)[:300]}"
         url = None
         if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
             url = out[st["out"].index("stream-address")]

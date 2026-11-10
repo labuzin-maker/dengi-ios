@@ -128,7 +128,7 @@ CAM_SPEC = {"type": "urn:miot-spec-v2:device:camera:0000A01C:chuangmi-ipc021:1",
     {"iid": 4, "type": "urn:miot-spec-v2:service:camera-stream-for-google-home:00007831:x:1", "properties": [
         {"iid": 1, "type": "urn:miot-spec-v2:property:video-codec-type:00000083:x:1", "format": "uint8", "access": []},
         {"iid": 2, "type": "urn:miot-spec-v2:property:video-attribute:00000084:x:1", "format": "uint8", "access": [],
-         "value-list": [{"value": 0, "description": "1920_1080_20"}]},
+         "value-list": [{"value": 0, "description": "Auto"}, {"value": 1, "description": "1920_1080_20"}, {"value": 2, "description": "640_360_20"}]},
         {"iid": 5, "type": "urn:miot-spec-v2:property:stream-address:0000005E:x:1", "format": "string", "access": []}],
      "actions": [{"iid": 1, "type": "urn:miot-spec-v2:action:start-hls-stream:0000281C:x:1", "in": [2], "out": [5]},
                  {"iid": 2, "type": "urn:miot-spec-v2:action:stop-stream:00002822:x:1", "in": [], "out": []}]}]}
@@ -140,7 +140,9 @@ class Camera(unittest.TestCase):
         self.assertEqual(sorted(c), ["night_shot", "time_watermark"])
         self.assertEqual(c["time_watermark"]["kind"], "toggle")
         self.assertEqual([o["label"] for o in c["night_shot"]["opts"]["options"]], ["Авто", "Выкл", "Вкл"])
-        self.assertEqual(find_stream(CAM_SPEC), {"siid": 4, "aiid": 1, "in": [0], "out": ["stream-address"]})
+        st = find_stream(CAM_SPEC)
+        self.assertEqual((st["siid"], st["aiid"], st["in"], st["out"], st["qpos"]), (4, 1, [0], ["stream-address"], 0))
+        self.assertEqual([q["label"] for q in st["quality"]], ["Авто", "1080p", "360p"])
         self.assertIsNone(find_stream(HUM_SPEC))
 
 
@@ -209,7 +211,7 @@ def fake_cloud(log):
         elif path == "/miotspec/prop/get":
             res = [{**p, "code": 0, "value": values[(p["did"], p["siid"], p["piid"])]} for p in data["params"]]
         elif path == "/miotspec/action":
-            res = {"code": 0, "out": ["https://video.example/live.m3u8"]} if data["params"]["in"] == [0] else {"code": -1}
+            res = {"code": 0, "out": ["https://video.example/live.m3u8"]} if data["params"]["in"] in ([0], [2]) else {"code": -1}
         elif path == "/miotspec/prop/set":
             for p in data["params"]:
                 values[(p["did"], p["siid"], p["piid"])] = p["value"]
@@ -260,6 +262,9 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap["xiaomi:cam1"]["caps"], ["video"])
         self.assertEqual(await drv.video(cam), "https://video.example/live.m3u8")
         self.assertEqual(log[-1], ("/miotspec/action", {"params": {"did": "cam1", "siid": 4, "aiid": 1, "in": [0]}}))
+        await drv.video(cam, quality="2")
+        self.assertEqual(log[-1][1]["params"]["in"], [2])
+        self.assertEqual(snap["xiaomi:cam1"]["extra"]["quality"][2], {"value": 2, "label": "360p"})
         wm = cam.entities["time_watermark"]
         self.assertEqual((wm.kind, wm.value), ("toggle", True))
         await drv.set(cam, wm, False)
