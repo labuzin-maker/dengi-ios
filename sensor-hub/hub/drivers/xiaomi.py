@@ -476,6 +476,15 @@ class XiaomiDriver(Driver):
             url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
         if not url:
             raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
+        # проверяем ссылку со стороны хаба: что по ней отдаётся на самом деле
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+                async with s.get(url) as r:
+                    body = (await r.content.read(400)).decode("utf-8", "replace")
+                    self._evlog[did] += (f" | проверка: HTTP {r.status}, тип {r.headers.get('Content-Type')}, "
+                                         f"начало: {body[:300]!r}")
+        except Exception as e:
+            self._evlog[did] += f" | проверка: {type(e).__name__}: {e}"[:200]
         return url
 
     def diagnostics(self):
