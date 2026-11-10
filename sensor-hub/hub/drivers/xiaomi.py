@@ -250,14 +250,12 @@ class XiaomiDriver(Driver):
         super().__init__(hub, cfg)
         self.cloud = XiaomiCloud(hub.data_dir / "xiaomi_session.json")
         self.poll = max(15, int(self.cfg.get("poll_seconds", 60)))
-        self.stream_wait = 20      # сколько секунд за один запрос ждать запуска трансляции
         self.spec_dir = hub.data_dir / "specs"
         self.spec_dir.mkdir(exist_ok=True)
         self._wake = asyncio.Event()
         self._devs = {}       # did -> {country, items, raw}
         self._codes = {}      # (did, siid, piid) -> код последнего ответа облака
         self._evlog = {}      # did -> что ответило облако про события
-        self._streams = {}    # did -> запущенная трансляция камеры
         self._model_urns = None
 
     # ---- вход (вызывается из панели) --------------------------------
@@ -498,66 +496,26 @@ class XiaomiDriver(Driver):
         st = x.get("stream")
         if not st:
             raise RuntimeError("У этой камеры нет службы трансляции")
-        args = list(st["in"])
-        if quality is not None and st.get("qpos") is not None:
-            pick = next((q["value"] for q in st["quality"] if str(q["value"]) == str(quality)), None)
-            if pick is not None:
-                args[st["qpos"]] = pick
-        # Повторный запуск сбрасывает трансляцию, поэтому уже запущенную не трогаем:
-        # в первые 2,5 минуты ждём её, позже проверяем, жива ли она ещё.
-        now = time.time()
-        c = self._streams.get(did)
-        if c and c["args"] == args:
-            if now - c["ts"] > 150 and not (await self._wait_stream(c["url"], 0))[0]:
-                c = None
-        else:
-            c = None
-        if c is None:
-            res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], args)
-            out = res.get("out") or []
-            self._evlog[did] = f"видео: качество={args} код={res.get('code')} out={str(out)[:300]}"
-            url = None
-            if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
-                url = out[st["out"].index("stream-address")]
-            if not (isinstance(url, str) and url.startswith("http")):
-                url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
-            if not url:
-                raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
-            c = self._streams[did] = {"url": url, "args": args, "ts": now}
-        ready, info = await self._wait_stream(c["url"], self.stream_wait)
-        waited = int(time.time() - c["ts"])
-        self._evlog[did] = (self._evlog.get(did) or "") .split(" | готовность")[0] + f" | готовность: {ready}, {info}, прошло {waited} с"
-        return {"url": c["url"], "ready": ready, "info": info, "waited": waited}
-
-    async def _wait_stream(self, url, wait):
-        from urllib.parse import urljoin
-        deadline = time.time() + wait
-        info = "не проверялось"
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
-            async def text(u):
-                async with s.get(u) as r:
-                    return r.status, await r.text(errors="replace")
-            while True:
-                try:
-                    status, body = await text(url)
-                    if "#EXTINF" in body:
-                        return True, "трансляция идёт"
-                    variants = [urljoin(url, ln.strip()) for ln in body.splitlines()
-                                if ln.strip() and not ln.startswith("#")]
-                    if status != 200:
-                        info = f"сервер видео ответил {status}"
-                    elif not variants:
-                        info = "сервер видео вернул пустой список"
-                    else:
-                        vstatus, vbody = await text(variants[0])
-                        if "#EXTINF" in vbody:
-                            return True, "трансляция идёт"
-                        info = f"трансляция ещё не началась (ответ {vstatus})"
-                except Exception as e:
-                    info = f"сервер видео недоступен: {type(e).__name__}"
-                if time.time() >= deadline:
-                    return False, info
-                await asyncio.sleep(2)
+        res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], st["in"])
+        out = res.get("out") or []
+        self._evlog[did] = f"видео: код={res.get('code')} out={str(out)[:300]}"
+        url = None
+        if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
+            url = out[st["out"].index("stream-address")]
+        if not (isinstance(url, str) and url.startswith("http")):
+            url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
+        if not url:
+            raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
+        # проверяем ссылку со стороны хаба: что по ней отдаётся на самом деле
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+                async with s.get(url) as r:
+                    body = (await r.content.read(400)).decode("utf-8", "replace")
+                    self._evlog[did] += (f" | проверка: HTTP {r.status}, тип {r.headers.get('Content-Type')}, "
+                                         f"начало: {body[:300]!r}")
+        except Exception as e:
+            self._evlog[did] += f" | проверка: {type(e).__name__}: {e}"[:200]
+        return {"url": url}
 
     def diagnostics(self):
         """Список устройств без секретов — для разбора, если что-то не отображается."""
