@@ -226,7 +226,7 @@ const ago = ts => { if (!ts) return ""; const s = nowS() - ts;
   if (s < 90) return "только что"; if (s < 3600) return Math.round(s / 60) + " мин назад";
   if (s < 86400) return Math.round(s / 3600) + " ч назад"; return Math.round(s / 86400) + " дн назад"; };
 const plural = (n, a, b, c) => { const m = n % 100, k = n % 10; return m > 10 && m < 20 ? c : k === 1 ? a : k > 1 && k < 5 ? b : c; };
-const SRC = { xiaomi: "Xiaomi", ble: "Bluetooth", shelly: "Shelly", demo: "пример" };
+const SRC = { xiaomi: "Xiaomi", ble: "Bluetooth", shelly: "Shelly", broadlink: "Тёплый пол", demo: "пример" };
 const SEC_KEYS = ["leak", "smoke", "contact", "motion"];
 const SEC_CATS = /submersion|magnet|motion|smoke|gas-sensor|occupancy|door/;
 const ent = (d, k) => d.entities.find(e => e.key === k);

@@ -345,5 +345,36 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
             r.close()
 
 
+
+class Broadlink(unittest.IsolatedAsyncioTestCase):
+    async def test_thermostat(self):
+        from hub.drivers.broadlink import BroadlinkDriver
+
+        class Fake:
+            name, model, mac = "зал", "HY02", bytes.fromhex("c8f742548e4a")
+            st = {"power": 1, "active": 1, "room_temp": 23.5, "external_temp": 27.0, "thermostat_temp": 26.0,
+                  "sensor": 2, "svl": 5, "svh": 35}
+            def get_full_status(self): return dict(self.st)
+            def set_temp(self, v): self.st["thermostat_temp"] = v
+            def set_power(self, v): self.st["power"] = v
+
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = Hub(Path(tmp))
+            drv = BroadlinkDriver(hub, {}); drv.lock = asyncio.Lock()
+            f = Fake(); drv.devs = {"c8:f7:42:54:8e:4a": f}
+            drv._publish("c8:f7:42:54:8e:4a", f, f.get_full_status())
+            d = hub.snapshot()["devices"][0]
+            vals = {e["id"].rsplit("/", 1)[1]: e["value"] for e in d["entities"]}
+            self.assertEqual((d["name"], d["category"]), ("зал", "thermostat"))
+            self.assertEqual(vals, {"temperature": 23.5, "floor": 27.0, "switch": True, "target_temperature": 26.0, "heating": True})
+            dev, ent = hub.find_entity(d["id"] + "/target_temperature")
+            await drv.set(dev, ent, 28.3)
+            self.assertEqual(f.st["thermostat_temp"], 28.5)
+            dev, ent = hub.find_entity(d["id"] + "/switch")
+            await drv.set(dev, ent, False)
+            self.assertIs(ent.value, False)
+            self.assertIs(hub.find_entity(d["id"] + "/heating")[1].value, False)
+
+
 if __name__ == "__main__":
     unittest.main()

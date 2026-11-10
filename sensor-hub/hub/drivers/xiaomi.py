@@ -523,7 +523,7 @@ class XiaomiDriver(Driver):
         codes = []
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
-                for n in range(7):
+                for n in range(4):
                     async with s.get(url) as r:
                         body = (await r.content.read(400)).decode("utf-8", "replace")
                         codes.append(r.status)

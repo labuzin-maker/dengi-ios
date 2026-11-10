@@ -30,6 +30,7 @@ KEYS = {
     "contact": ("Открыто", "", "binary"),
     "leak": ("Протечка", "", "binary"),
     "smoke": ("Дым", "", "binary"),
+    "heating": ("Нагрев", "", "binary"),
     "switch": ("Питание", "", "switch"),
     # настройки: number — число в пределах min..max, select — выбор из списка
     "target_humidity": ("Целевая влажность", "%", "number"),
