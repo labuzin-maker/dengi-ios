@@ -13,7 +13,7 @@ fi
 [ -d .venv ] || python3 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 # bleak (Bluetooth) на сервере не нужен
-.venv/bin/pip install -q aiohttp pyyaml
+.venv/bin/pip install -q aiohttp pyyaml broadlink
 
 if [ ! -f config.yaml ]; then
   KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
