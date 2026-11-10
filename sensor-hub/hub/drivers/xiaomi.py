@@ -250,13 +250,14 @@ class XiaomiDriver(Driver):
         super().__init__(hub, cfg)
         self.cloud = XiaomiCloud(hub.data_dir / "xiaomi_session.json")
         self.poll = max(15, int(self.cfg.get("poll_seconds", 60)))
-        self.stream_wait = 25      # сколько секунд ждать запуска трансляции камеры
+        self.stream_wait = 20      # сколько секунд за один запрос ждать запуска трансляции
         self.spec_dir = hub.data_dir / "specs"
         self.spec_dir.mkdir(exist_ok=True)
         self._wake = asyncio.Event()
         self._devs = {}       # did -> {country, items, raw}
         self._codes = {}      # (did, siid, piid) -> код последнего ответа облака
         self._evlog = {}      # did -> что ответило облако про события
+        self._streams = {}    # did -> запущенная трансляция камеры
         self._model_urns = None
 
     # ---- вход (вызывается из панели) --------------------------------
@@ -502,24 +503,35 @@ class XiaomiDriver(Driver):
             pick = next((q["value"] for q in st["quality"] if str(q["value"]) == str(quality)), None)
             if pick is not None:
                 args[st["qpos"]] = pick
-        res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], args)
-        out = res.get("out") or []
-        self._evlog[did] = f"видео: качество={args} код={res.get('code')} out={str(out)[:300]}"
-        url = None
-        if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
-            url = out[st["out"].index("stream-address")]
-        if not (isinstance(url, str) and url.startswith("http")):
-            url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
-        if not url:
-            raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
-        # ждём, пока трансляция действительно начнётся: в плейлисте должны появиться куски видео
-        ready, info = await self._wait_stream(url)
-        self._evlog[did] += f" | готовность: {ready}, {info}"
-        return {"url": url, "ready": ready, "info": info}
+        # Повторный запуск сбрасывает трансляцию, поэтому уже запущенную не трогаем:
+        # в первые 2,5 минуты ждём её, позже проверяем, жива ли она ещё.
+        now = time.time()
+        c = self._streams.get(did)
+        if c and c["args"] == args:
+            if now - c["ts"] > 150 and not (await self._wait_stream(c["url"], 0))[0]:
+                c = None
+        else:
+            c = None
+        if c is None:
+            res = await self.cloud.action(x["country"], did, st["siid"], st["aiid"], args)
+            out = res.get("out") or []
+            self._evlog[did] = f"видео: качество={args} код={res.get('code')} out={str(out)[:300]}"
+            url = None
+            if "stream-address" in st["out"] and len(out) > st["out"].index("stream-address"):
+                url = out[st["out"].index("stream-address")]
+            if not (isinstance(url, str) and url.startswith("http")):
+                url = next((o for o in out if isinstance(o, str) and o.startswith("http")), None)
+            if not url:
+                raise RuntimeError(f"Камера не выдала ссылку на видео (код {res.get('code')})")
+            c = self._streams[did] = {"url": url, "args": args, "ts": now}
+        ready, info = await self._wait_stream(c["url"], self.stream_wait)
+        waited = int(time.time() - c["ts"])
+        self._evlog[did] = (self._evlog.get(did) or "") .split(" | готовность")[0] + f" | готовность: {ready}, {info}, прошло {waited} с"
+        return {"url": c["url"], "ready": ready, "info": info, "waited": waited}
 
-    async def _wait_stream(self, url):
+    async def _wait_stream(self, url, wait):
         from urllib.parse import urljoin
-        deadline = time.time() + self.stream_wait
+        deadline = time.time() + wait
         info = "не проверялось"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as s:
             async def text(u):

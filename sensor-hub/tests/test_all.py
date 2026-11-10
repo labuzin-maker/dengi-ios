@@ -231,16 +231,18 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         async def h(request):
             if request.path == "/master.m3u8":
                 return web.Response(text="#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nlive/index.m3u8\n")
+            if request.path == "/none":
+                return web.Response(status=404)
             hits["n"] += 1
             return web.Response(text="#EXTM3U\n" + ("#EXTINF:2,\nseg1.ts\n" if hits["n"] > 1 else ""))
         app = web.Application(); app.router.add_get("/{t:.*}", h)
         srv = TestServer(app); await srv.start_server()
         drv = XiaomiDriver(Hub(Path(tempfile.mkdtemp())), {})
         drv.stream_wait = 6
-        self.assertEqual(await drv._wait_stream(str(srv.make_url("/master.m3u8"))), (True, "трансляция идёт"))
+        self.assertEqual(await drv._wait_stream(str(srv.make_url("/master.m3u8")), 6), (True, "трансляция идёт"))
         self.assertEqual(hits["n"], 2)
-        drv.stream_wait = 0
-        ok, info = await drv._wait_stream(str(srv.make_url("/none")))
+        ok, info = await drv._wait_stream(str(srv.make_url("/none")), 0)
+        self.assertEqual((ok, info), (False, "сервер видео ответил 404"))
         await srv.close()
 
     async def test_xiaomi_driver(self):
@@ -282,7 +284,10 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         v = await drv.video(cam)
         self.assertEqual((v["url"], v["ready"]), ("https://video.example/live.m3u8", False))
         self.assertEqual(log[-1], ("/miotspec/action", {"params": {"did": "cam1", "siid": 4, "aiid": 1, "in": [0]}}))
-        await drv.video(cam, quality="2")
+        n = len([p for p, _ in log if p == "/miotspec/action"])
+        await drv.video(cam)                 # повторный запрос не перезапускает трансляцию
+        self.assertEqual(len([p for p, _ in log if p == "/miotspec/action"]), n)
+        await drv.video(cam, quality="2")    # другое качество — новый запуск
         self.assertEqual(log[-1][1]["params"]["in"], [2])
         self.assertEqual(snap["xiaomi:cam1"]["extra"]["quality"][2], {"value": 2, "label": "360p"})
         wm = cam.entities["time_watermark"]

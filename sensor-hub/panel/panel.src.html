@@ -466,7 +466,7 @@ function drawSheet() {
   if (sheet.type === "dev") {
     const d = state.devices.find(x => x.id === sheet.id); if (!d) return closeSheet();
     const list = d.entities.filter(e => e.kind === "sensor" || e.kind === "binary"), e = list.find(x => x.id === sheet.eid);
-    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div>${(d.caps || []).includes("video") ? `<div id="devVideo" class="video">${sheet.video?.url ? `<video src="${esc(sheet.video.url)}" controls autoplay muted playsinline></video>` : `<button class="btn" data-act="video" ${d.online ? "" : "disabled"}>${sheet.video?.loading ? "Запускаю трансляцию, до 30 секунд…" : "Смотреть видео"}</button>`}${qualityHtml(d)}${sheet.video?.err ? `<div class="err">${esc(sheet.video.err)}</div>` : ""}</div>` : ""}<div id="devCtl" class="ctls">${ctlHtml(d)}</div>`;
+    h = head(d.name) + `<div class="sub">${esc(d.room)} · ${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}${d.online ? "" : " · нет связи"}</div>${(d.caps || []).includes("video") ? `<div id="devVideo" class="video">${sheet.video?.url ? `<video src="${esc(sheet.video.url)}" controls autoplay muted playsinline></video>` : `<button class="btn" data-act="video" ${d.online ? "" : "disabled"}>${sheet.video?.loading ? `Камера запускает трансляцию… ${sheet.video.waited ? sheet.video.waited + " с" : ""}` : "Смотреть видео"}</button>`}${qualityHtml(d)}${sheet.video?.err ? `<div class="err">${esc(sheet.video.err)}</div>` : ""}</div>` : ""}<div id="devCtl" class="ctls">${ctlHtml(d)}</div>`;
     if (e) {
       const cur = e.kind === "binary" ? (e.value == null ? "—" : (BIN[e.key] || ["Нет", "Да"])[+!!e.value]) : `${fmt(e.key, e.value)}<i>${esc(e.unit)}</i>`;
       h += (list.length > 1 ? `<div class="seg">${list.map(x => `<button data-act="pick" data-e="${esc(x.id)}" aria-pressed="${x.id === e.id}">${esc(x.name)}</button>`).join("")}</div>` : "")
@@ -538,8 +538,11 @@ const actions = {
     if (mode === "demo") { s.video = { err: "В демо-режиме видео нет: оно запрашивается у настоящей камеры через хаб." }; return drawSheet(); }
     s.video = { loading: true }; drawSheet();
     const dv = state.devices.find(x => x.id === s.id);
-    try { const r = await api("video", { id: s.id, quality: dv ? qPick(dv) : null });
-      s.video = r.ready === false ? { err: "Камера не начала трансляцию за 25 секунд: " + (r.info || "причина неизвестна") + ". Попробуйте ещё раз или другое качество." } : { url: r.url }; }
+    try { for (;;) { const r = await api("video", { id: s.id, quality: dv ? qPick(dv) : null });
+        if (sheet !== s) return;
+        if (r.ready !== false) { s.video = { url: r.url }; break; }
+        if ((r.waited || 999) > 130) { s.video = { err: "Камера не начала трансляцию за две минуты: " + (r.info || "причина неизвестна") + ". Попробуйте позже." }; break; }
+        s.video = { loading: true, waited: r.waited }; drawSheet(); } }
     catch (e) { s.video = { err: "Видео не получено. " + e.message }; }
     if (sheet === s) { drawSheet(); const v = $("#devVideo video"); let tries = 0; const arm = () => { const v = $("#devVideo video"); if (!v) return;
       v.onerror = () => { if (sheet !== s) return;
