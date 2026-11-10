@@ -1,0 +1,16 @@
+# Хаб за nginx с https. Замените datchiki.example.ru на свой поддомен,
+# получите сертификат (например, certbot --nginx -d datchiki.example.ru)
+# и поставьте в config.yaml  host: 127.0.0.1
+server {
+    listen 443 ssl;
+    server_name datchiki.example.ru;
+    # ssl_certificate и ssl_certificate_key добавит certbot
+
+    location / {
+        proxy_pass http://127.0.0.1:8377;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_buffering off;          # нужно для живого обновления панели
+        proxy_read_timeout 1h;
+    }
+}

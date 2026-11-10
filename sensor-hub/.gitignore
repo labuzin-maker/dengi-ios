@@ -1,0 +1,6 @@
+# личные данные: вход в Xiaomi, история, ваши настройки — в GitHub не попадают
+data/
+config.yaml
+.venv/
+__pycache__/
+*.pyc

@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Датчики">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#eaf0f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1719" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Датчики дома</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Раскладка: одна колонка-лента; сверху сводка «что требует внимания», ниже комнаты, в комнате строки устройств с показаниями. */
+:root {
+  --bg: #eaf0f1; --surface: #f8fbfb; --line: #cfdadc; --fg: #14252b; --muted: #5d7279;
+  --accent: #0b6f6b; --accent-fg: #ffffff; --accent-soft: #d5e9e7;
+  --warn: #9a5b00; --warn-soft: #f6e6c8; --crit: #b3261e; --crit-soft: #f7d9d6;
+  --ui: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --num: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1719; --surface: #162326; --line: #2a3d42; --fg: #e3eeef; --muted: #8ea4aa;
+  --accent: #4fc4bd; --accent-fg: #06201f; --accent-soft: #173b3a;
+  --warn: #f0b860; --warn-soft: #3a2c10; --crit: #ff8a80; --crit-soft: #44191a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1719; --surface: #162326; --line: #2a3d42; --fg: #e3eeef; --muted: #8ea4aa;
+  --accent: #4fc4bd; --accent-fg: #06201f; --accent-soft: #173b3a;
+  --warn: #f0b860; --warn-soft: #3a2c10; --crit: #ff8a80; --crit-soft: #44191a; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 400 15px/1.45 var(--ui); -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wrap { max-width: 640px; margin: 0 auto; padding-block: 18px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 22px; }
+
+.top { display: flex; align-items: center; gap: 12px; }
+.top h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.01em; flex: 1; min-width: 0; }
+.link { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.live { background: var(--accent); }
+.icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--surface); }
+.icon-btn svg { width: 20px; height: 20px; fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.note { font-size: 13.5px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); }
+.note b { font-weight: 600; }
+
+.alerts { display: flex; flex-direction: column; gap: 6px; }
+.alert { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px; border-radius: 10px; font-weight: 500; }
+.alert small { font-weight: 400; color: inherit; opacity: .8; margin-left: auto; white-space: nowrap; }
+.alert.crit { background: var(--crit-soft); color: var(--crit); }
+.alert.warn { background: var(--warn-soft); color: var(--warn); }
+.calm { color: var(--muted); font-size: 14px; }
+
+.room { display: flex; flex-direction: column; gap: 8px; }
+.room > header { display: flex; align-items: baseline; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.room h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); flex: 1; min-width: 0; }
+.room .sum { font: 500 15px var(--num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.dev { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; background: var(--surface); border-radius: 12px; }
+.dev.off { opacity: .55; }
+.dev-head { display: flex; align-items: center; gap: 8px; }
+.dev-name { font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dev-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.vals { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.val { display: flex; flex-direction: column; gap: 1px; min-width: 64px; }
+.val .n { font: 500 22px/1.15 var(--num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.val .n i { font: 400 12px var(--ui); color: var(--muted); margin-left: 3px; font-style: normal; }
+.val .l { font-size: 12px; color: var(--muted); }
+.val.small .n { font-size: 15px; }
+.val.stale .n { color: var(--muted); }
+.val.low .n { color: var(--warn); }
+.state { padding: 3px 9px; border-radius: 999px; font: 500 13px var(--ui); background: var(--bg); color: var(--muted); display: inline-block; }
+.state.on { background: var(--warn-soft); color: var(--warn); }
+.state.crit { background: var(--crit-soft); color: var(--crit); }
+
+.sw { display: flex; align-items: center; gap: 10px; width: 100%; padding-top: 4px; }
+.sw .l { flex: 1; min-width: 0; font-size: 14px; }
+.track { width: 50px; height: 30px; border-radius: 15px; background: var(--line); position: relative; flex: none; transition: background .15s; }
+.track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); transition: transform .15s; }
+.sw[aria-checked="true"] .track { background: var(--accent); }
+.sw[aria-checked="true"] .track::after { transform: translateX(20px); }
+.sw[disabled] { opacity: .5; }
+
+.hidden-list { font-size: 13px; color: var(--muted); }
+.hidden-list button { text-decoration: underline; color: var(--accent); }
+
+/* нижние листы */
+.shade { position: fixed; inset: 0; background: rgba(8, 18, 20, .5); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { background: var(--surface); color: var(--fg); width: 100%; max-width: 640px; max-height: 88%; overflow-y: auto; border-radius: 18px 18px 0 0;
+  padding-block: 18px calc(22px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 14px; }
+.sheet h3 { margin: 0; font-size: 18px; font-weight: 700; text-wrap: balance; }
+.sheet-head { display: flex; align-items: flex-start; gap: 10px; }
+.sheet-head h3 { flex: 1; min-width: 0; }
+.x { font-size: 14px; color: var(--accent); font-weight: 600; padding: 4px 2px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.field input { font: 400 16px var(--ui); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.btn { background: var(--accent); color: var(--accent-fg); font-weight: 600; border-radius: 10px; padding: 11px 16px; text-align: center; }
+.btn.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > * { flex: 1 1 140px; }
+.chips { display: flex; gap: 6px; }
+.chip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.big { font: 500 34px/1 var(--num); font-variant-numeric: tabular-nums; }
+.big i { font: 400 15px var(--ui); color: var(--muted); font-style: normal; margin-left: 4px; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .ax { font: 400 10px var(--num); fill: var(--muted); }
+.stats { display: flex; gap: 18px; font-size: 13px; color: var(--muted); }
+.stats b { font: 500 14px var(--num); color: var(--fg); }
+.src { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.src:first-of-type { border-top: 0; }
+.src .t { font-weight: 600; }
+.src .m { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.src > div { flex: 1; min-width: 0; }
+.pill { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.crit { background: var(--crit-soft); color: var(--crit); }
+.qr { display: flex; flex-direction: column; gap: 10px; align-items: center; text-align: center; font-size: 14px; }
+.qr img { width: 200px; height: 200px; border-radius: 8px; background: #fff; }
+.err { color: var(--crit); font-size: 14px; }
+.hint { font-size: 13px; color: var(--muted); }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .track, .track::after { transition: none; } }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <h1>Датчики дома</h1>
+    <span class="link"><span class="dot" id="dot"></span><span id="linkText">подключение</span></span>
+    <button class="icon-btn" id="openSettings" aria-label="Источники датчиков">
+      <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
+  </div>
+  <div class="note" id="demoNote" hidden><b>Демо-режим.</b> Это примеры датчиков. Настоящие появятся, когда панель открыта с хаба в домашней сети.</div>
+  <div id="alerts" class="alerts"></div>
+  <div id="rooms" style="display:flex;flex-direction:column;gap:22px"></div>
+  <div id="hiddenList" class="hidden-list"></div>
+</div>
+<div id="sheetHost"></div>
+
+<script>
+(() => {
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const store = { get(k) { try { return localStorage.getItem(k) } catch { return null } }, set(k, v) { try { localStorage.setItem(k, v) } catch {} } };
+
+let mode = "connecting";          // live | demo
+let state = { devices: [], drivers: [] };
+let key = store.get("hubKey") || "";
+let base = store.get("hubUrl") || "";      // адрес хаба, если панель открыта не с него (GitHub Pages)
+let demoTimer = null;
+let sheet = null;                 // {type, ...}
+
+/* ---------- формат ---------- */
+const DEC = { temperature: 1, humidity: 0, battery: 0, illuminance: 0, power: 0, pressure: 0, co2: 0, voltage: 2, energy: 2 };
+const fmt = (e, v = e.value) => v == null ? "—" : Number(v).toLocaleString("ru-RU", { minimumFractionDigits: DEC[e.key] ?? 0, maximumFractionDigits: DEC[e.key] ?? 1 });
+const BIN = { motion: ["Тихо", "Движение"], contact: ["Закрыто", "Открыто"], leak: ["Сухо", "Протечка"], smoke: ["Чисто", "Дым"] };
+const ago = ts => { if (!ts) return ""; const s = Date.now() / 1000 - ts;
+  if (s < 90) return "только что"; if (s < 3600) return Math.round(s / 60) + " мин назад";
+  if (s < 86400) return Math.round(s / 3600) + " ч назад"; return Math.round(s / 86400) + " дн назад"; };
+const SRC = { xiaomi: "Xiaomi", ble: "Bluetooth", shelly: "Shelly", demo: "пример" };
+
+/* ---------- связь с хабом ---------- */
+async function api(path, body) {
+  const r = await fetch(base + "api/" + path, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", "X-Key": key }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) { openSheet({ type: "key" }); throw new Error("Нужен ключ доступа"); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || "Ошибка хаба");
+  return j;
+}
+let es = null, pollTimer = null;
+function listen() {
+  if (es) es.close();
+  clearInterval(pollTimer);
+  es = new EventSource(base + "api/events" + (key ? "?key=" + encodeURIComponent(key) : ""));
+  es.onmessage = m => { setLink(true); state = JSON.parse(m.data); render(); };
+  es.onerror = () => setLink(false);
+  pollTimer = setInterval(async () => { if (es.readyState !== 1) { try { state = await api("state"); setLink(true); render(); } catch { setLink(false); } } }, 10000);
+}
+function setLink(ok) {
+  $("#dot").classList.toggle("live", ok);
+  $("#linkText").textContent = mode === "demo" ? "демо" : ok ? "на связи" : "нет связи с хабом";
+}
+async function boot() {
+  const artifact = /github\.io$|claude/.test(location.hostname) || location.protocol === "file:";
+  if (!artifact || base) {
+    try {
+      const ctl = new AbortController(); setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(base + "api/state", { headers: { "X-Key": key }, signal: ctl.signal });
+      if (r.status === 401) { mode = "live"; openSheet({ type: "key" }); return; }
+      if (r.ok) { state = await r.json(); mode = "live"; clearInterval(demoTimer); $("#demoNote").hidden = true; setLink(true); render(); listen(); return true; }
+    } catch {}
+  }
+  if (mode !== "demo") startDemo();
+  return false;
+}
+
+/* ---------- демо без хаба ---------- */
+function startDemo() {
+  mode = "demo"; $("#demoNote").hidden = false; setLink(true);
+  const now = () => Date.now() / 1000;
+  const mk = (id, name, room, ents) => ({ id, name, orig_name: name, room, driver: "demo", model: "Пример", online: true, hidden: false,
+    entities: ents.map(([k, kind, label, unit, value, writable]) => ({ id: id + "/" + k, key: k, kind, name: label, unit, value, ts: now(), writable: !!writable })) });
+  const T = (v) => ["temperature", "sensor", "Температура", "°C", v], H = v => ["humidity", "sensor", "Влажность", "%", v], B = v => ["battery", "sensor", "Батарея", "%", v];
+  state = { drivers: [{ name: "demo", title: "Демо-датчики", status: "ok", message: "Примеры" }], devices: [
+    mk("d1", "Термометр", "Гостиная", [T(22.4), H(41), B(87)]),
+    mk("d2", "Термометр", "Детская", [T(23.1), H(44), B(62)]),
+    mk("d7", "Розетка обогревателя", "Детская", [["switch", "switch", "Питание", "", true, true], ["power", "sensor", "Мощность", "Вт", 840]]),
+    mk("d3", "Уличный термометр", "Балкон", [T(-3.5), H(71), B(12)]),
+    mk("d4", "Входная дверь", "Прихожая", [["contact", "binary", "Открыто", "", false], B(95)]),
+    mk("d5", "Датчик движения", "Прихожая", [["motion", "binary", "Движение", "", false], ["illuminance", "sensor", "Освещённость", "лк", 120]]),
+    mk("d6", "Датчик протечки", "Ванная", [["leak", "binary", "Протечка", "", false], B(78)]),
+  ] };
+  render();
+  demoTimer = setInterval(() => {
+    for (const d of state.devices) for (const e of d.entities) {
+      if (e.key === "temperature") e.value = Math.round((e.value + (Math.random() - .5) * .2) * 10) / 10;
+      if (e.key === "motion") e.value = Math.random() < .2;
+      if (e.key === "power") e.value = d.entities[0].value ? 830 + Math.round(Math.random() * 20) : 0;
+      e.ts = now();
+    }
+    render();
+  }, 5000);
+}
+function demoHistory(e, hours) {
+  const out = [], n = 96, t1 = Date.now() / 1000, base = Number(e.value) || 0;
+  for (let i = 0; i < n; i++) { const t = t1 - hours * 3600 * (1 - i / (n - 1));
+    const v = e.kind === "sensor" ? base + Math.sin(i / 9) * Math.max(1, Math.abs(base) * .06) * (1 - i / n) + Math.sin(i * 1.7) * .15 : (Math.sin(i * 2.3) > .8 ? 1 : 0);
+    out.push([t, Math.round(v * 10) / 10]); }
+  out[n - 1][1] = Number(e.value) || 0;
+  return out;
+}
+
+/* ---------- главный экран ---------- */
+function render() {
+  const devs = state.devices.filter(d => !d.hidden);
+  // сводка
+  const al = [];
+  for (const d of devs) for (const e of d.entities) {
+    if ((e.key === "leak" || e.key === "smoke") && e.value) al.push(["crit", `${BIN[e.key][1]}: ${d.name}`, d.room]);
+    if (e.key === "contact" && e.value) al.push(["warn", `Открыто: ${d.name}`, d.room]);
+    if (e.key === "battery" && e.value != null && e.value <= 15) al.push(["warn", `Батарея ${e.value}%: ${d.name}`, d.room]);
+  }
+  for (const d of devs) if (!d.online) al.push(["warn", `Не на связи: ${d.name}`, d.room]);
+  for (const s of state.drivers) if (s.status === "need_login" || s.status === "error") al.push(["warn", `${s.title}: ${s.message}`, ""]);
+  $("#alerts").innerHTML = al.length
+    ? al.map(([c, t, r]) => `<div class="alert ${c}"><span>${esc(t)}</span><small>${esc(r)}</small></div>`).join("")
+    : devs.length ? `<div class="calm">Всё спокойно: ${devs.length} ${plural(devs.length, "устройство", "устройства", "устройств")} на связи.</div>`
+    : `<div class="calm">Датчиков пока нет. Откройте источники (кнопка справа вверху) и подключите Xiaomi.</div>`;
+  // комнаты
+  const rooms = new Map();
+  for (const d of devs) (rooms.get(d.room) || rooms.set(d.room, []).get(d.room)).push(d);
+  $("#rooms").innerHTML = [...rooms].map(([room, list]) => {
+    const pick = k => { const v = list.flatMap(d => d.online ? d.entities : []).filter(e => e.key === k && e.value != null).map(e => e.value); return v.length ? v.reduce((a, b) => a + b) / v.length : null; };
+    const t = pick("temperature"), h = pick("humidity");
+    const sum = [t != null ? fmt({ key: "temperature" }, t) + "°" : "", h != null ? Math.round(h) + "%" : ""].filter(Boolean).join(" · ");
+    return `<section class="room"><header><h2>${esc(room)}</h2><span class="sum">${sum}</span></header>${list.map(devHtml).join("")}</section>`;
+  }).join("");
+  const hid = state.devices.filter(d => d.hidden);
+  $("#hiddenList").innerHTML = hid.length ? "Скрыты: " + hid.map(d => `<button data-dev="${esc(d.id)}">${esc(d.name)}</button>`).join(", ") : "";
+  if (sheet && sheet.type === "settings") drawSheet();
+}
+const plural = (n, a, b, c) => { const m = n % 100, k = n % 10; return m > 10 && m < 20 ? c : k === 1 ? a : k > 1 && k < 5 ? b : c; };
+function devHtml(d) {
+  const nowS = Date.now() / 1000;
+  const vals = [], sws = [];
+  for (const e of d.entities) {
+    if (e.kind === "switch") { sws.push(`<button class="sw" role="switch" aria-checked="${!!e.value}" data-sw="${esc(e.id)}" ${e.writable && d.online ? "" : "disabled"}><span class="l">${esc(e.name)}</span><span class="track"></span></button>`); continue; }
+    const stale = e.ts && nowS - e.ts > 3 * 3600 ? " stale" : "";
+    if (e.kind === "binary") {
+      const [off, on] = BIN[e.key] || ["Нет", "Да"];
+      const cls = e.value ? (e.key === "leak" || e.key === "smoke" ? " crit" : " on") : "";
+      vals.push(`<button class="val${stale}" data-ent="${esc(e.id)}"><span class="state${cls}">${e.value == null ? "—" : e.value ? on : off}</span></button>`);
+    } else {
+      const small = e.key === "battery" || e.key === "voltage" ? " small" : "";
+      const low = e.key === "battery" && e.value != null && e.value <= 15 ? " low" : "";
+      vals.push(`<button class="val${small}${stale}${low}" data-ent="${esc(e.id)}"><span class="n">${fmt(e)}<i>${esc(e.unit)}</i></span><span class="l">${esc(e.name)}</span></button>`);
+    }
+  }
+  const last = Math.max(0, ...d.entities.map(e => e.ts || 0));
+  const meta = d.online ? ago(last) : "не на связи";
+  return `<div class="dev${d.online ? "" : " off"}"><div class="dev-head"><button class="dev-name" data-dev="${esc(d.id)}">${esc(d.name)}</button><span class="dev-meta">${esc(meta)}</span></div>
+    ${vals.length ? `<div class="vals">${vals.join("")}</div>` : d.entities.length ? "" : `<div class="dev-meta">Показаний пока нет</div>`}${sws.join("")}</div>`;
+}
+const findEnt = id => { for (const d of state.devices) for (const e of d.entities) if (e.id === id) return [d, e]; return []; };
+
+document.addEventListener("click", async ev => {
+  const t = ev.target.closest("[data-sw],[data-ent],[data-dev],[data-act]");
+  if (!t) { if (ev.target.classList.contains("shade")) closeSheet(); return; }
+  if (t.dataset.sw) {
+    const [d, e] = findEnt(t.dataset.sw); if (!e) return;
+    const want = !e.value; e.value = want; render();
+    if (mode === "demo") { const p = d.entities.find(x => x.key === "power"); if (p) p.value = want ? 840 : 0; render(); return; }
+    try { await api("set", { entity: e.id, value: want }); } catch (err) { e.value = !want; render(); openSheet({ type: "msg", title: "Не получилось переключить", text: err.message }); }
+  } else if (t.dataset.ent) openSheet({ type: "ent", id: t.dataset.ent, hours: 24 });
+  else if (t.dataset.dev) openSheet({ type: "dev", id: t.dataset.dev });
+  else if (t.dataset.act) actions[t.dataset.act](t);
+});
+$("#openSettings").onclick = () => openSheet({ type: "settings" });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+
+/* ---------- листы ---------- */
+function openSheet(s) { sheet = s; drawSheet(); if (s.type === "ent") loadHistory(); }
+function closeSheet() { sheet = null; $("#sheetHost").innerHTML = ""; }
+function drawSheet() {
+  const host = $("#sheetHost");
+  const head = t => `<div class="sheet-head"><h3>${esc(t)}</h3><button class="x" data-act="close">Закрыть</button></div>`;
+  let h = "";
+  if (sheet.type === "msg") h = head(sheet.title) + `<div>${esc(sheet.text)}</div>`;
+  if (sheet.type === "key") h = `<h3>Ключ доступа</h3><label class="field">Ключ из файла config.yaml на хабе<input id="keyInput" type="password" autocomplete="off" value=""></label><button class="btn" data-act="saveKey">Войти</button>`;
+  if (sheet.type === "dev") {
+    const d = state.devices.find(x => x.id === sheet.id); if (!d) return closeSheet();
+    h = head(d.name) + `<div class="dev-meta">${esc(SRC[d.driver] || d.driver)}${d.model ? " · " + esc(d.model) : ""}</div>
+      <label class="field">Название<input id="devName" value="${esc(d.name)}" autocomplete="off"></label>
+      <label class="field">Комната<input id="devRoom" value="${esc(d.room === "Без комнаты" ? "" : d.room)}" autocomplete="off" placeholder="Например, Кухня"></label>
+      <div class="row"><button class="btn" data-act="saveDev">Сохранить</button><button class="btn ghost" data-act="toggleHide">${d.hidden ? "Показывать на панели" : "Скрыть с панели"}</button></div>
+      ${sheet.err ? `<div class="err">${esc(sheet.err)}</div>` : ""}`;
+  }
+  if (sheet.type === "ent") {
+    const [d, e] = findEnt(sheet.id); if (!e) return closeSheet();
+    const cur = e.kind === "binary" ? (e.value == null ? "—" : (BIN[e.key] || ["Нет", "Да"])[+!!e.value]) : `${fmt(e)}<i>${esc(e.unit)}</i>`;
+    h = head(`${e.name} · ${d.name}`) + `<div class="big">${cur}</div><div class="dev-meta">${esc(d.room)} · обновлено ${esc(ago(e.ts) || "—")}</div>
+      <div class="chips">${[[24, "Сутки"], [168, "Неделя"], [720, "Месяц"]].map(([hh, l]) => `<button class="chip" data-act="period" data-h="${hh}" aria-pressed="${sheet.hours === hh}">${l}</button>`).join("")}</div>
+      <div class="chart">${sheet.data ? chart(sheet.data, e, sheet.hours) : `<div class="dev-meta">Загружаю историю…</div>`}</div>`;
+  }
+  if (sheet.type === "settings") {
+    const P = { ok: ["", "работает"], need_login: ["warn", "нужен вход"], error: ["crit", "ошибка"], starting: ["warn", "запуск"] };
+    const srcs = state.drivers.map(s => { const [c, l] = P[s.status] || ["", s.status];
+      let extra = "";
+      if (s.name === "xiaomi" && mode === "live") extra = s.status === "need_login"
+        ? `<div style="margin-top:8px"><button class="btn" data-act="xiaomiLogin">Войти в Mi Home</button></div>`
+        : `<div style="margin-top:6px"><button class="x" data-act="xiaomiLogout">Выйти из аккаунта</button></div>`;
+      return `<div class="src"><div><div class="t">${esc(s.title)}</div><div class="m">${esc(s.message)}</div>${extra}</div><span class="pill ${c}">${l}</span></div>`; }).join("");
+    let qr = "";
+    if (sheet.qr) qr = `<div class="qr"><img src="${esc(sheet.qr.qr)}" alt="QR-код для входа в Xiaomi"><div>Отсканируйте код в приложении Mi Home (Профиль → сканер вверху справа) и подтвердите вход.</div><a href="${esc(sheet.qr.login_url)}" target="_blank" rel="noopener">Или откройте страницу входа Xiaomi</a></div>`;
+    h = head("Источники датчиков") + (mode === "demo" ? `<label class="field">Адрес вашего хаба (начинается с https://)<input id="hubUrl" inputmode="url" autocomplete="off" placeholder="https://datchiki.example.ru" value="${esc(base)}"></label><button class="btn" data-act="saveHub">Подключиться к хабу</button>`
+      : base ? `<div class="hint">Хаб: ${esc(base)} <button class="x" data-act="dropHub">Отключиться</button></div>` : "") + srcs + qr
+      + (sheet.err ? `<div class="err">${esc(sheet.err)}</div>` : "")
+      + `<div class="hint">Новый датчик Xiaomi добавляйте в приложении Mi Home: в панели он появится сам в течение 10 минут.</div>`;
+    if (sheet.qr && state.drivers.some(s => s.name === "xiaomi" && s.status !== "need_login")) sheet.qr = null;
+  }
+  host.innerHTML = `<div class="shade"><div class="sheet" role="dialog" aria-modal="true">${h}</div></div>`;
+}
+async function loadHistory() {
+  const s = sheet, [, e] = findEnt(s.id);
+  try { s.data = mode === "demo" ? demoHistory(e, s.hours) : await api(`history?entity=${encodeURIComponent(s.id)}&hours=${s.hours}`); }
+  catch { s.data = []; }
+  if (sheet === s) drawSheet();
+}
+function chart(data, e, hours) {
+  if (data.length < 2) return `<div class="dev-meta">Истории пока мало. График появится, когда накопятся показания.</div>`;
+  const W = 340, H = 150, L = 6, R = 44, T = 10, B = 22, t1 = Date.now() / 1000, t0 = t1 - hours * 3600;
+  const vs = data.map(p => p[1]); let lo = Math.min(...vs), hi = Math.max(...vs);
+  const bin = e.kind !== "sensor"; if (bin) { lo = 0; hi = 1; }
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const x = t => L + (W - L - R) * Math.max(0, (t - t0) / (t1 - t0)), y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  let p = "", prev = null;
+  for (const [t, v] of data) { p += (p ? (bin ? `L${x(t).toFixed(1)} ${y(prev).toFixed(1)}L` : "L") : "M") + `${x(t).toFixed(1)} ${y(v).toFixed(1)}`; prev = v; }
+  const lastV = data[data.length - 1][1]; p += `L${x(t1).toFixed(1)} ${y(lastV).toFixed(1)}`;
+  const area = p + `L${x(t1).toFixed(1)} ${H - B}L${x(data[0][0]).toFixed(1)} ${H - B}Z`;
+  const lab = v => bin ? (BIN[e.key] || ["Нет", "Да"])[v] : fmt(e, v);
+  const mid = hours === 24 ? "12 ч назад" : hours === 168 ? "3,5 дн назад" : "15 дн назад";
+  const avg = vs.reduce((a, b) => a + b, 0) / vs.length;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График за период">
+    <line x1="${L}" x2="${W - R}" y1="${y(hi)}" y2="${y(hi)}" stroke="var(--line)" stroke-dasharray="2 3"/><line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--line)"/>
+    <path d="${area}" fill="var(--accent-soft)" stroke="none"/><path d="${p}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+    <circle cx="${x(t1)}" cy="${y(lastV)}" r="3.5" fill="var(--accent)"/>
+    <text class="ax" x="${W - R + 6}" y="${y(hi) + 3}">${lab(hi)}</text><text class="ax" x="${W - R + 6}" y="${H - B + 3}">${lab(lo)}</text>
+    <text class="ax" x="${L}" y="${H - 6}">${hours === 24 ? "сутки назад" : hours === 168 ? "неделю назад" : "месяц назад"}</text>
+    <text class="ax" x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">${mid}</text><text class="ax" x="${W - R}" y="${H - 6}" text-anchor="end">сейчас</text></svg>`
+    + (bin ? "" : `<div class="stats"><span>мин <b>${fmt(e, Math.min(...vs))}</b></span><span>средн <b>${fmt(e, avg)}</b></span><span>макс <b>${fmt(e, Math.max(...vs))}</b></span></div>`);
+}
+const actions = {
+  close: closeSheet,
+  period(t) { sheet.hours = +t.dataset.h; sheet.data = null; drawSheet(); loadHistory(); },
+  async saveHub() { let u = $("#hubUrl").value.trim(); if (u && !/^https?:\/\//.test(u)) u = "https://" + u; if (u && !u.endsWith("/")) u += "/";
+    base = u; store.set("hubUrl", u); sheet.err = ""; const ok = u && await boot();
+    if (sheet && sheet.type === "settings") { if (!ok && u) sheet.err = "Хаб по этому адресу не ответил. Проверьте адрес: он должен начинаться с https://"; drawSheet(); } },
+  dropHub() { store.set("hubUrl", ""); location.reload(); },
+  saveKey() { key = $("#keyInput").value.trim(); store.set("hubKey", key); closeSheet(); boot(); },
+  async saveDev() { await editDev({ name: $("#devName").value.trim(), room: $("#devRoom").value.trim() }); },
+  async toggleHide() { const d = state.devices.find(x => x.id === sheet.id); await editDev({ hidden: !d.hidden }); },
+  async xiaomiLogin() { sheet.err = ""; try { sheet.qr = await api("xiaomi/login", {}); } catch (e) { sheet.err = "Не удалось начать вход: " + e.message; } drawSheet(); },
+  async xiaomiLogout() { try { await api("xiaomi/logout", {}); } catch {} },
+};
+async function editDev(ch) {
+  const d = state.devices.find(x => x.id === sheet.id);
+  if (mode === "demo") { if (ch.name) d.name = ch.name; if (ch.room != null && "room" in ch) d.room = ch.room || "Без комнаты"; if ("hidden" in ch) d.hidden = ch.hidden; closeSheet(); render(); return; }
+  try { await api("device", { id: d.id, ...ch, name: ch.name === d.orig_name ? "" : ch.name }); closeSheet(); }
+  catch (e) { sheet.err = e.message; document.activeElement.blur(); drawSheet(); }
+}
+setInterval(() => { if (!sheet) render(); }, 60000);
+boot();
+})();
+</script>
