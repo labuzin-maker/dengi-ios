@@ -178,7 +178,10 @@ def fake_cloud(log):
               ("cam1", 2, 1): True, ("cam1", 2, 3): 0, ("cam1", 2, 4): True}
 
     async def handler(request):
-        q = dict(request.query)
+        # The Xiaomi API takes encrypted fields as application/x-www-form-urlencoded
+        # POST body parameters, not URL query parameters.
+        assert not request.query, "Xiaomi form fields must not be sent in the URL"
+        q = dict(await request.post())
         path = request.path[len("/app"):]
         sn = xa.signed_nonce(q["ssecurity"], q["_nonce"])
         check = {k: v for k, v in q.items() if k in ("data", "rc4_hash__")}
