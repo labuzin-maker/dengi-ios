@@ -229,14 +229,16 @@ class XiaomiCloud:
                 "channel": "MI_APP_STORE"}.items()),
         }
         http = await self._client()
-        async with http.post(self.api_url(country) + path, params=fields, headers=headers) as r:
+        # Xiaomi expects the signed/encrypted form fields in the POST body.
+        # Putting them in the query string can trigger HTTP 426 at the cloud API.
+        async with http.post(self.api_url(country) + path, data=fields, headers=headers) as r:
             status, text = r.status, await r.text()
         if status in (401, 403):
             if _retry and await self.refresh():
                 return await self.call(country, path, data, _retry=False)
             raise AuthError("Сессия Xiaomi истекла, войдите заново")
         if status != 200:
-            raise RuntimeError(f"Облако Xiaomi ответило {status}")
+            raise RuntimeError(f"Облако Xiaomi ответило {status}: {text[:300]}")
         try:
             body = json.loads(decrypt_response(sn, text))
         except Exception:
